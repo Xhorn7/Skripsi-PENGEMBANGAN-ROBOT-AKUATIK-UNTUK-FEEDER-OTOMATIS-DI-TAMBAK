@@ -55,7 +55,7 @@ void loop() {
     }
 
     bool sent = radio.write(&text, sizeof(text));
-    Serial.print(sent ? "Data terkirim: " : "Input diterima, receiver belum terbaca: ");
+    Serial.print(sent ? "Data terkirim ke receiver: " : "Input masuk, tapi receiver tidak membalas ACK: ");
     Serial.println(text);
   }
 }
