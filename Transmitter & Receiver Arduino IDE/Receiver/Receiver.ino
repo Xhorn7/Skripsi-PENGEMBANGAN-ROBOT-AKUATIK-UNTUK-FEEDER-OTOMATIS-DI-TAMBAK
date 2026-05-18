@@ -7,10 +7,17 @@ const byte address[6] = "ADDR1";
 
 void setup() {
   Serial.begin(9600);
-  radio.begin();
+  if (!radio.begin()) {
+    Serial.println("NRF24 receiver tidak terdeteksi");
+    while (1) {
+    }
+  }
   radio.openReadingPipe(0, address);
   radio.setPALevel(RF24_PA_MIN);
+  radio.setDataRate(RF24_250KBPS);
+  radio.setChannel(76);
   radio.startListening();
+  Serial.println("Receiver READY");
 };
 
 void loop() {
