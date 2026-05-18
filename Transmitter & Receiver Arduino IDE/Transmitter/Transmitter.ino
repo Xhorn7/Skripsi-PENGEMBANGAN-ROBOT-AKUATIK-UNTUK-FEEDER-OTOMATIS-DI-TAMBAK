@@ -3,7 +3,7 @@
 #include <nRF24L01.h>
 
 RF24 radio(9, 8); // CE, CSN
-const byte address[10] = "ADDRESS";
+const byte address[6] = "ADDR1";
 
 char text[32] = "";
 
@@ -13,7 +13,7 @@ void setup() {
   radio.openWritingPipe(address);
   radio.setPALevel(RF24_PA_MIN);
   radio.stopListening();
-  Serial.println("Transmitter Ready");
+  Serial.println("READY");
 }
 
 void loop() {
