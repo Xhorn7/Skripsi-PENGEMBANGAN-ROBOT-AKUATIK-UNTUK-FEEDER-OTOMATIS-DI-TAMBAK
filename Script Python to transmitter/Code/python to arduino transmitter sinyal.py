@@ -7,7 +7,7 @@ import serial.tools.list_ports as list_ports
 PORT = ''  # Port COM (kosong = auto-deteksi). Contoh: 'COM7'
 BAUD = 9600  # Kecepatan komunikasi (baud rate) - harus sama dengan Arduino
 HANDSHAKE_MSG = 'INIT\n'  # Pesan inisialisasi yang dikirim ke Arduino
-HANDSHAKE_RESPONSES = ('READY', 'OK', 'Data terkirim')  # Respons yang diharapkan dari Arduino
+HANDSHAKE_RESPONSES = ('TRANSMITTER_READY', 'TRANSMITTER_OK')  # Respons yang diharapkan dari Arduino transmitter
 HANDSHAKE_TIMEOUT = 3  # Waktu tunggu respons (detik)
 HANDSHAKE_RETRIES = 2  # Jumlah percobaan handshake jika gagal
 AUTO_DETECT = True  # Jika True, cari port Arduino otomatis jika PORT kosong
@@ -204,6 +204,10 @@ def main():
                 # Flush buffer untuk memastikan data langsung terkirim
                 ser.flush()
                 print("Terkirim:", msg)
+
+                status = ser.readline().decode(errors='ignore').strip()
+                if status:
+                    print("Arduino:", status)
             except Exception as e:
                 print('Write error:', e)
     except KeyboardInterrupt:
