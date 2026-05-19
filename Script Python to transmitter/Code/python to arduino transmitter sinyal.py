@@ -10,7 +10,7 @@ HANDSHAKE_MSG = 'INIT\n'  # Pesan inisialisasi yang dikirim ke Arduino
 HANDSHAKE_RESPONSES = ('TRANSMITTER_READY', 'TRANSMITTER_OK')  # Respons yang diharapkan dari Arduino transmitter
 HANDSHAKE_TIMEOUT = 3  # Waktu tunggu respons (detik)
 HANDSHAKE_RETRIES = 2  # Jumlah percobaan handshake jika gagal
-AUTO_DETECT = True  # Jika True, cari port Arduino otomatis jika PORT kosong
+AUTO_DETECT = True  # Jika True, cari port Arduino otomatis jika PORT kosongk
 
 
 def find_arduino_ports():
