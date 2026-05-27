@@ -2,15 +2,15 @@
 #include <nRF24L01.h>
 #include <RF24.h>
 
-RF24 radio(9, 10);
+RF24 radio(4, 15); // CE, CSN
 
 const byte address[6] = "00001";
+
+char text[32];
 
 void setup() {
 
   Serial.begin(9600);
-
-  pinMode(LED_BUILTIN, OUTPUT);
 
   if (!radio.begin()) {
     Serial.println("NRF gagal");
@@ -21,35 +21,36 @@ void setup() {
 
   radio.setPALevel(RF24_PA_LOW);
 
+  radio.setDataRate(RF24_250KBPS);
+
   radio.stopListening();
 
-  Serial.println("Transmitter Ready");
+  Serial.println("=== TRANSMITTER READY ===");
+  Serial.println("Ketik pesan:");
 }
 
 void loop() {
 
-  const char text[] = "HALO";
+  if (Serial.available()) {
 
-  bool hasil = radio.write(&text, sizeof(text));
+    String pesan = Serial.readStringUntil('\n');
 
-  if (hasil) {
+    pesan.trim();
 
-    Serial.println("Pesan terkirim");
+    memset(text, 0, sizeof(text));
 
-    // LED kedip 2x
-    for(int i = 0; i < 2; i++) {
+    pesan.toCharArray(text, sizeof(text));
 
-      digitalWrite(LED_BUILTIN, HIGH);
-      delay(200);
+    bool hasil = radio.write(&text, sizeof(text));
 
-      digitalWrite(LED_BUILTIN, LOW);
-      delay(200);
+    if (hasil) {
+
+      Serial.print("Terkirim: ");
+      Serial.println(text);
+
+    } else {
+
+      Serial.println("Gagal mengirim");
     }
-
-  } else {
-
-    Serial.println("Gagal kirim");
   }
-
-  delay(1000);
 }
