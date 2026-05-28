@@ -1,10 +1,14 @@
+# =========================
+# RASPBERRY PI TRANSMITTER
+# =========================
+
 from pyrf24 import RF24, RF24_PA_LOW, RF24_250KBPS
 import time
 
 radio = RF24(24, 0)
 
 if not radio.begin():
-    print("Radio gagal detect")
+    print("NRF gagal detect")
     quit()
 
 address = b"1Node"
@@ -12,22 +16,25 @@ address = b"1Node"
 radio.open_tx_pipe(address)
 
 radio.setPALevel(RF24_PA_LOW)
-
 radio.setDataRate(RF24_250KBPS)
-
 radio.setChannel(0x76)
 
-print("Transmitter jalan")
+print("Transmitter Ready")
 
 while True:
 
-    text = b"HELLO"
+    # contoh input ukuran tambak
+    panjang = 10
+    lebar = 5
 
-    result = radio.write(text)
+    # format data
+    data = f"{panjang},{lebar}"
+
+    result = radio.write(data.encode())
 
     if result:
-        print("Kirim:", text)
+        print("Kirim:", data)
     else:
         print("Gagal kirim")
 
-    time.sleep(1)
+    time.sleep(2)
