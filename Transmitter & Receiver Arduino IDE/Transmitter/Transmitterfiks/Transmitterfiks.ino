@@ -1,56 +1,40 @@
-#include <SPI.h>
-#include <nRF24L01.h>
-#include <RF24.h>
+# =========================
+# RASPBERRY PI TRANSMITTER
+# =========================
 
-RF24 radio(4, 15); // CE, CSN
+from pyrf24 import RF24, RF24_PA_LOW, RF24_250KBPS
+import time
 
-const byte address[6] = "00001";
+radio = RF24(24, 0)
 
-char text[32];
+if not radio.begin():
+    print("NRF gagal detect")
+    quit()
 
-void setup() {
+address = b"1Node"
 
-  Serial.begin(9600);
+radio.open_tx_pipe(address)
 
-  if (!radio.begin()) {
-    Serial.println("NRF gagal");
-    while (1);
-  }
+radio.setPALevel(RF24_PA_LOW)
+radio.setDataRate(RF24_250KBPS)
+radio.setChannel(0x76)
 
-  radio.openWritingPipe(address);
+print("Transmitter Ready")
 
-  radio.setPALevel(RF24_PA_LOW);
+while True:
 
-  radio.setDataRate(RF24_250KBPS);
+    # contoh input ukuran tambak
+    panjang = 10
+    lebar = 5
 
-  radio.stopListening();
+    # format data
+    data = f"{panjang},{lebar}"
 
-  Serial.println("=== TRANSMITTER READY ===");
-  Serial.println("Ketik pesan:");
-}
+    result = radio.write(data.encode())
 
-void loop() {
+    if result:
+        print("Kirim:", data)
+    else:
+        print("Gagal kirim")
 
-  if (Serial.available()) {
-
-    String pesan = Serial.readStringUntil('\n');
-
-    pesan.trim();
-
-    memset(text, 0, sizeof(text));
-
-    pesan.toCharArray(text, sizeof(text));
-
-    bool hasil = radio.write(&text, sizeof(text));
-
-    if (hasil) {
-
-      Serial.print("Terkirim: ");
-      Serial.println(text);
-
-    } else {
-
-      Serial.println("Gagal mengirim");
-    }
-  }
-}
+    time.sleep(2)
