@@ -1,0 +1,27 @@
+NRF24:
+| NRF24 | ESP32  |
+| ----- | ------ |
+| CE    | GPIO9  |
+| CSN   | GPIO10 |
+| MOSI  | GPIO23 |
+| MISO  | GPIO19 |
+| SCK   | GPIO18 |
+| VCC   | 3.3V   |
+| GND   | GND    |
+
+
+MPU6050:
+| MPU6050 | ESP32  |
+| ------- | ------ |
+| SDA     | GPIO21 |
+| SCL     | GPIO22 |
+| VCC     | 3.3V   |
+| GND     | GND    |
+
+
+ESC (motor):
+| ESC          | ESP32     |
+| ------------ | --------- |
+| Signal Left  | GPIO25    |
+| Signal Right | GPIO26    |
+| GND ESC      | GND ESP32 |
