@@ -11,7 +11,7 @@ if not radio.begin():
     print("NRF gagal detect")
     quit()
 
-address = b"1Node"
+address = b"00001"
 
 radio.open_tx_pipe(address)
 
@@ -20,21 +20,23 @@ radio.setDataRate(RF24_250KBPS)
 radio.setChannel(0x76)
 
 print("Transmitter Ready")
+print("=" * 30)
+
+panjang = int(input("Masukkan panjang tambak (meter): "))
+lebar   = int(input("Masukkan lebar tambak (meter)  : "))
+
+print(f"\nMengirim misi: Panjang={panjang}m, Lebar={lebar}m, Mode=AUTO")
+print("Tekan Ctrl+C untuk berhenti\n")
 
 while True:
 
-    # contoh input ukuran tambak
-    panjang = 10
-    lebar = 5
-
-    # format data
-    data = f"{panjang},{lebar}"
+    data = f"P={panjang};L={lebar};MODE=AUTO"
 
     result = radio.write(data.encode())
 
     if result:
-        print("Kirim:", data)
+        print("Terkirim :", data)
     else:
-        print("Gagal kirim")
+        print("Gagal kirim — cek koneksi NRF24")
 
     time.sleep(2)
