@@ -7,6 +7,7 @@
 
 // ================= NRF24 =================
 
+// CATATAN: 9/10 = pin flash internal WROOM (berisiko crash/boot-loop). Tes sementara.
 RF24 radio(9, 10);
 
 const byte address[6] = "00001";
@@ -30,7 +31,6 @@ Servo escRight;
 
 #define ESC_LEFT_PIN  25
 #define ESC_RIGHT_PIN 26
-
 // ================= KALIBRASI =================
 
 #define ROBOT_SPEED_MPS   0.5f   // kecepatan robot @ CRUISE_PWM (m/s) — UKUR di air!
@@ -197,8 +197,11 @@ void setup()
   // NRF
   if (!radio.begin())
   {
-    Serial.println("NRF FAIL");
-    while (1);
+    while (1)
+    {
+      Serial.println("NRF FAIL - cek wiring NRF24 (CE=4, CSN=5, VCC=3.3V)");
+      delay(1000);
+    }
   }
 
   radio.setPALevel(RF24_PA_LOW);
