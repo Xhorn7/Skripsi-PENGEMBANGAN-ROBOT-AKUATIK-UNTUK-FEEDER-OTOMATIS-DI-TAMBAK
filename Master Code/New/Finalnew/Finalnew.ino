@@ -190,8 +190,16 @@ void setup()
   mpu.calcGyroOffsets(true);
 
   // ESC
-  escLeft.attach(ESC_LEFT_PIN);
-  escRight.attach(ESC_RIGHT_PIN);
+  // ESP32Servo WAJIB alokasi timer dulu sebelum attach; kalau tidak,
+  // PWM ke ESC bisa gagal diam-diam -> baling-baling nggak gerak.
+  ESP32PWM::allocateTimer(0);
+  ESP32PWM::allocateTimer(1);
+  ESP32PWM::allocateTimer(2);
+  ESP32PWM::allocateTimer(3);
+  escLeft.setPeriodHertz(50);   // ESC = sinyal servo 50 Hz
+  escRight.setPeriodHertz(50);
+  escLeft.attach(ESC_LEFT_PIN, 1000, 2000);
+  escRight.attach(ESC_RIGHT_PIN, 1000, 2000);
   armESC();
 
   // NRF
