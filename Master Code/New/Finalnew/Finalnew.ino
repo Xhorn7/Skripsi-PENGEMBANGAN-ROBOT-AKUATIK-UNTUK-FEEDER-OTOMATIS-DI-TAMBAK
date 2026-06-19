@@ -7,8 +7,9 @@
 
 // ================= NRF24 =================
 
-// CATATAN: 9/10 = pin flash internal WROOM (berisiko crash/boot-loop). Tes sementara.
-RF24 radio(9, 10);
+// CE=GPIO4, CSN=GPIO5 (GPIO bebas & aman).
+// JANGAN pakai 9/10 = pin flash internal WROOM (bikin crash/boot-loop).
+RF24 radio(4, 5);
 
 const byte address[6] = "00001";
 
