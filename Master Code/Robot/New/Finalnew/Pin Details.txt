@@ -1,8 +1,8 @@
 NRF24:
 | NRF24 | ESP32  |
 | ----- | ------ |
-| CE    | GPIO9  |
-| CSN   | GPIO10 |
+| CE    | GPIO4 |
+| CSN   | GPIO5 |
 | MOSI  | GPIO23 |
 | MISO  | GPIO19 |
 | SCK   | GPIO18 |
