@@ -51,6 +51,7 @@ String modeRobot  = "";
 bool missionReceived = false;
 
 unsigned long lastSignalMs = 0;  // heartbeat terakhir dari transmitter
+bool stopRequested = false;      // di-set true saat menerima paket "STOP"
 
 // =========================================
 
@@ -99,8 +100,13 @@ bool signalAlive()
   if (radio.available())
   {
     char buf[64];
-    radio.read(buf, sizeof(buf));   // konsumsi & buang, cukup sebagai heartbeat
+    memset(buf, 0, sizeof(buf));
+    radio.read(buf, sizeof(buf));   // konsumsi paket (heartbeat / STOP)
     lastSignalMs = millis();
+
+    // Perintah STOP di tengah misi -> tandai untuk abort.
+    if (strncmp(buf, "STOP", 4) == 0)
+      stopRequested = true;
   }
   return (millis() - lastSignalMs) < SIGNAL_TIMEOUT_MS;
 }
@@ -123,6 +129,14 @@ bool driveHeadingMS(float targetYaw, unsigned long durationMs)
     {
       stopBoat();
       Serial.println("!! SINYAL HILANG -> STOP (failsafe)");
+      return false;
+    }
+
+    // Perintah STOP manual dari transmitter -> abort
+    if (stopRequested)
+    {
+      stopBoat();
+      Serial.println("!! STOP diterima -> misi dibatalkan");
       return false;
     }
 
@@ -173,6 +187,12 @@ bool turnRight90()
       Serial.println("!! SINYAL HILANG -> STOP (failsafe)");
       return false;
     }
+    if (stopRequested)
+    {
+      stopBoat();
+      Serial.println("!! STOP diterima -> misi dibatalkan");
+      return false;
+    }
     delay(20);
   }
   stopBoat();
@@ -184,6 +204,29 @@ bool turnRight90()
 void setup()
 {
   Serial.begin(115200);
+
+  // ================= NRF (SOLUSI 5A) =================
+  // Init radio PALING AWAL, sebelum MPU & ESC. Alasan: MPU (calcGyroOffsets)
+  // bisa nge-hang selamanya kalau I2C bermasalah, dan armESC() ada delay(5000).
+  // Kalau NRF diinit belakangan, startListening() baru jalan ~8 detik setelah
+  // boot (atau tidak pernah) -> receiver tidak nge-ACK -> transmitter FAILED.
+  // Dengan dipindah ke atas, radio langsung listening & tidak keblok subsistem lain.
+  if (!radio.begin())
+  {
+    while (1)
+    {
+      Serial.println("NRF FAIL - cek wiring NRF24 (CE=4, CSN=5, VCC=3.3V)");
+      delay(1000);
+    }
+  }
+
+  radio.setPALevel(RF24_PA_LOW);
+  radio.setDataRate(RF24_250KBPS);
+  radio.setChannel(0x76);
+  radio.openReadingPipe(1, address);  // pipe 1 (pipe 0 reserved untuk auto-ACK)
+  radio.startListening();
+
+  Serial.println("Radio Ready (listening)");
 
   // MPU
   Wire.begin(21, 22);
@@ -203,22 +246,6 @@ void setup()
   escRight.attach(ESC_RIGHT_PIN, 1000, 2000);
   armESC();
 
-  // NRF
-  if (!radio.begin())
-  {
-    while (1)
-    {
-      Serial.println("NRF FAIL - cek wiring NRF24 (CE=4, CSN=5, VCC=3.3V)");
-      delay(1000);
-    }
-  }
-
-  radio.setPALevel(RF24_PA_LOW);
-  radio.setDataRate(RF24_250KBPS);
-  radio.setChannel(0x76);
-  radio.openReadingPipe(1, address);  // pipe 1 (pipe 0 reserved untuk auto-ACK)
-  radio.startListening();
-
   Serial.println("Receiver Ready");
 }
 
@@ -232,9 +259,26 @@ void loop()
   {
     memset(text, 0, sizeof(text));
     radio.read(text, sizeof(text));
-    lastSignalMs = millis();
+    lastSignalMs = millis();   // heartbeat: paket APAPUN menandakan koneksi hidup
 
     String data = String(text);
+
+    // Paket PING = heartbeat murni (jaga failsafe), BUKAN misi baru.
+    // Cukup update lastSignalMs di atas, lalu abaikan — supaya misi yang
+    // sedang jalan tidak ter-trigger ulang oleh heartbeat.
+    if (data.startsWith("PING"))
+    {
+      return;
+    }
+
+    // Paket STOP saat idle (di luar misi): pastikan motor mati, lalu abaikan.
+    if (data.startsWith("STOP"))
+    {
+      stopBoat();
+      stopRequested = false;   // sudah ditangani, jangan sampai membatalkan misi berikutnya
+      Serial.println("STOP diterima (idle) — motor dipastikan mati");
+      return;
+    }
 
     Serial.println();
     Serial.println("MISSION RECEIVED");
@@ -279,6 +323,7 @@ void loop()
     unsigned long shiftDurationMs = (unsigned long)(LANE_WIDTH_M / ROBOT_SPEED_MPS * 1000.0f);
 
     lastSignalMs = millis();  // reset heartbeat di awal misi
+    stopRequested = false;    // bersihkan sisa STOP lama agar tak membatalkan misi baru
 
     Serial.print("Jumlah jalur  : "); Serial.println(nLanes);
     Serial.print("Durasi 1 jalur: "); Serial.print(laneDurationMs); Serial.println(" ms");
