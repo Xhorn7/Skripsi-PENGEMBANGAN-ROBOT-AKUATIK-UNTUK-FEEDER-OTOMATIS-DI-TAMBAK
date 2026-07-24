@@ -1,92 +1,122 @@
-from pyrf24 import RF24, RF24_PA_LOW, RF24_250KBPS
-import time
-import threading
+"""
+receiverArduino.py — ENTRY POINT tunggal sisi Transmitter (Raspberry Pi/PC)
+===========================================================================
 
-radio = RF24(24, 0)
+Jalankan SATU file ini untuk menjalankan semuanya (GUI + telemetri + logging):
 
-if not radio.begin():
-    print("NRF gagal detect")
-    quit()
+    python receiverArduino.py            # buka GUI panel kontrol (default)
+    python receiverArduino.py --cli      # mode teks lama (tanpa GUI)
 
-address = b"00001"
+GUI otomatis MODE SIMULASI bila NRF/pyrf24 tidak tersedia (mis. di PC),
+dan memakai NRF asli bila dijalankan di Raspberry Pi.
 
-radio.open_tx_pipe(address)
+Logika inti ada di:
+    - feeder_gui.py    (antarmuka CustomTkinter)
+    - feeder_core.py   (RadioLink, MissionEstimator, ActivityLogger, MPUSerialReader)
+"""
 
-radio.setPALevel(RF24_PA_LOW)
-radio.setDataRate(RF24_250KBPS)
-radio.setChannel(0x76)
-
-print("=== FEEDER TRANSMITTER ===")
-
-# ================= HEARTBEAT =================
-# Receiver punya failsafe: kalau tidak ada paket masuk selama SIGNAL_TIMEOUT_MS
-# (3000 ms), motor otomatis STOP. Karena satu misi bisa berjalan lama, kita
-# HARUS terus mengirim paket "PING" sebagai heartbeat selama misi aktif —
-# kalau tidak, robot berhenti sendiri setelah ~3 detik.
-#
-# PING dikirim di thread terpisah tiap 500 ms (< 3000 ms) supaya thread utama
-# tetap bebas menunggu input() untuk misi berikutnya.
-
-HEARTBEAT_INTERVAL_S = 0.5
-
-lock = threading.Lock()        # radio.write() hanya boleh dipanggil 1 thread pada satu waktu
-mission_running = False        # True setelah misi pertama dikirim
+import sys
 
 
-def radio_send(payload: bytes) -> bool:
-    with lock:
-        return radio.write(payload)
+# =====================================================================
+# MODE GUI (default) — buka panel kontrol
+# =====================================================================
+
+def run_gui():
+    try:
+        from feeder_gui import FeederGUI
+    except ImportError as e:
+        print("=" * 58)
+        print(" Gagal memuat GUI:", e)
+        print(" Pasang dependensi dulu:")
+        print("     pip install customtkinter          (wajib utk GUI)")
+        print("     pip install pyrf24 pyserial         (utk NRF & MPU nyata di Pi)")
+        print(" Atau jalankan mode teks lama:")
+        print("     python receiverArduino.py --cli")
+        print("=" * 58)
+        sys.exit(1)
+
+    FeederGUI().mainloop()
 
 
-def heartbeat_loop():
+# =====================================================================
+# MODE CLI (lama) — antarmuka teks, sama seperti versi awal
+# =====================================================================
+
+def run_cli():
+    import time
+    import threading
+    from pyrf24 import RF24, RF24_PA_LOW, RF24_250KBPS
+
+    radio = RF24(24, 0)
+
+    if not radio.begin():
+        print("NRF gagal detect")
+        return
+
+    address = b"00001"
+    radio.open_tx_pipe(address)
+    radio.setPALevel(RF24_PA_LOW)
+    radio.setDataRate(RF24_250KBPS)
+    radio.setChannel(0x76)
+
+    print("=== FEEDER TRANSMITTER (mode teks) ===")
+
+    HEARTBEAT_INTERVAL_S = 0.5
+    lock = threading.Lock()
+    state = {"mission_running": False}
+
+    def radio_send(payload: bytes) -> bool:
+        with lock:
+            return radio.write(payload)
+
+    def heartbeat_loop():
+        while True:
+            if state["mission_running"]:
+                radio_send(b"PING")
+            time.sleep(HEARTBEAT_INTERVAL_S)
+
+    threading.Thread(target=heartbeat_loop, daemon=True).start()
+
     while True:
-        if mission_running:
-            radio_send(b"PING")
-        time.sleep(HEARTBEAT_INTERVAL_S)
+        panjang = input("Panjang Tambak (m) [ketik STOP untuk batalkan misi]: ").strip()
 
+        if panjang.upper() == "STOP":
+            state["mission_running"] = False
+            time.sleep(HEARTBEAT_INTERVAL_S)
+            ok = False
+            for _ in range(5):
+                if radio_send(b"STOP"):
+                    ok = True
+                time.sleep(0.05)
+            print("STOP terkirim — misi dibatalkan" if ok else "STOP FAILED — cek NRF")
+            print()
+            continue
 
-threading.Thread(target=heartbeat_loop, daemon=True).start()
+        lebar = input("Lebar Tambak (m): ").strip()
+        payload = f"P={panjang};L={lebar};MODE=AUTO".encode()
+        print("SEND :", payload.decode())
 
-# ================= INPUT MISI =================
-
-while True:
-
-    panjang = input("Panjang Tambak (m) [ketik STOP untuk batalkan misi]: ").strip()
-
-    # ---- Perintah STOP: batalkan misi yang sedang berjalan ----
-    if panjang.upper() == "STOP":
-        mission_running = False          # hentikan heartbeat PING lebih dulu
-        time.sleep(HEARTBEAT_INTERVAL_S) # beri jeda supaya tak bentrok dgn PING terakhir
         ok = False
         for _ in range(5):
-            if radio_send(b"STOP"):
+            if radio_send(payload):
                 ok = True
             time.sleep(0.05)
-        print("STOP terkirim — misi dibatalkan" if ok else "STOP FAILED — cek NRF")
+
+        print("SUCCESS — heartbeat PING berjalan otomatis" if ok
+              else "FAILED — cek koneksi NRF")
+        state["mission_running"] = True
         print()
-        continue
 
-    lebar = input("Lebar Tambak (m): ").strip()
 
-    mode = "AUTO"
+# =====================================================================
 
-    payload = f"P={panjang};L={lebar};MODE={mode}".encode()
-
-    print("SEND :", payload.decode())
-
-    # Kirim misi beberapa kali supaya pasti diterima (mengatasi paket drop).
-    ok = False
-    for _ in range(5):
-        if radio_send(payload):
-            ok = True
-        time.sleep(0.05)
-
-    if ok:
-        print("SUCCESS — heartbeat PING berjalan otomatis")
+def main():
+    if "--cli" in sys.argv or "-c" in sys.argv:
+        run_cli()
     else:
-        print("FAILED — cek koneksi NRF")
+        run_gui()
 
-    # Mulai kirim heartbeat PING sampai ada misi baru.
-    mission_running = True
 
-    print()
+if __name__ == "__main__":
+    main()
