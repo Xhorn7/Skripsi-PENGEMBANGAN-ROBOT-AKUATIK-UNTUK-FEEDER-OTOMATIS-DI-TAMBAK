@@ -1,0 +1,10 @@
+# Dependensi runtime GUI Feeder (sisi Transmitter / Raspberry Pi)
+# Install:  pip install -r requirements.txt
+
+customtkinter>=6.0.0     # framework GUI
+pyserial>=3.5            # baca MPU6050 via serial USB
+pyrf24>=0.4.0            # driver NRF24L01 (WAJIB di Raspberry Pi; skip di Windows)
+
+# --- opsional, hanya untuk regenerasi dokumentasi PDF (tidak perlu utk running) ---
+# reportlab>=4.0
+# pillow>=10.0

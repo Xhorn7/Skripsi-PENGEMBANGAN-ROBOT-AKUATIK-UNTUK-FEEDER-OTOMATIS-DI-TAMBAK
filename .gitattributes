@@ -1,2 +1,12 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Skrip shell WAJIB LF (dijalankan di Raspberry Pi/Linux; CRLF -> "bad interpreter")
+*.sh text eol=lf
+
+# Aset biner: jangan pernah konversi line-ending (mencegah korupsi saat clone/checkout)
+*.pdf binary
+*.zip binary
+*.png binary
+*.jpg binary
+*.jpeg binary
