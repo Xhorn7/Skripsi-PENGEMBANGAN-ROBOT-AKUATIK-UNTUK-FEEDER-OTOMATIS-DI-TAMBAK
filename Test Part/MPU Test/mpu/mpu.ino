@@ -1,99 +1,61 @@
 #include <Wire.h>
+#include <MPU6050_tockn.h>
 
+// ================= MPU =================
+// Pin & library disamakan dengan Finalnew.ino:
+//   Wire.begin(21, 22)  => SDA = GPIO21, SCL = GPIO22
+//   library MPU6050_tockn (mpu.calcGyroOffsets)
+//
+// Tujuan file ini: KALIBRASI MPU sebelum dipasang di robot.
+// 1. Taruh robot/MPU DIAM & DATAR selama proses calcGyroOffsets.
+// 2. Catat nilai offset gyro yang tampil (GyroX/Y/Z Offset).
+// 3. Setelah kalibrasi, pantau Yaw (AngleZ) harus stabil ~0 saat diam
+//    dan berubah wajar saat diputar.
 
+#define SDA_PIN 21
+#define SCL_PIN 22
 
-#define MPU_ADDR 0x68
-
-
-
-int16_t AccX, AccY, AccZ;
-
-int16_t GyroX, GyroY, GyroZ;
-
-
+MPU6050 mpu(Wire);
 
 void setup() {
-
   Serial.begin(115200);
+  delay(200);
 
-  
+  Wire.begin(SDA_PIN, SCL_PIN);   // SDA=21, SCL=22 (sama dgn Finalnew)
 
-  // Sesuai wiring kamu
+  Serial.println();
+  Serial.println("=== KALIBRASI MPU6050 ===");
+  Serial.println("Pastikan MPU DIAM & DATAR. Jangan disentuh...");
 
-  Wire.begin(18, 19); // SDA = 18, SCL = 19
+  mpu.begin();
+  mpu.calcGyroOffsets(true);      // true = tampilkan progress kalibrasi
 
-
-
-  // Wake up MPU6050
-
-  Wire.beginTransmission(MPU_ADDR);
-
-  Wire.write(0x6B);
-
-  Wire.write(0);
-
-  Wire.endTransmission(true);
-
-
-
-  Serial.println("MPU6050 Ready (SDA=18, SCL=19)");
-
+  Serial.println();
+  Serial.println("Kalibrasi selesai. Gyro offset:");
+  Serial.print("  X = "); Serial.println(mpu.getGyroXoffset());
+  Serial.print("  Y = "); Serial.println(mpu.getGyroYoffset());
+  Serial.print("  Z = "); Serial.println(mpu.getGyroZoffset());
+  Serial.println("-------------------------------------");
+  Serial.println("Sekarang pantau angle. Yaw(Z) harus ~0 saat diam.");
+  delay(1000);
 }
 
-
-
 void loop() {
+  mpu.update();
 
-  Wire.beginTransmission(MPU_ADDR);
+  Serial.print("Angle -> X: ");
+  Serial.print(mpu.getAngleX());
+  Serial.print("\tY: ");
+  Serial.print(mpu.getAngleY());
+  Serial.print("\tZ(Yaw): ");
+  Serial.print(mpu.getAngleZ());
 
-  Wire.write(0x3B);
+  Serial.print("   | Gyro -> X: ");
+  Serial.print(mpu.getGyroX());
+  Serial.print("\tY: ");
+  Serial.print(mpu.getGyroY());
+  Serial.print("\tZ: ");
+  Serial.println(mpu.getGyroZ());
 
-  Wire.endTransmission(false);
-
-  Wire.requestFrom(MPU_ADDR, 14, true);
-
-
-
-  AccX = Wire.read() << 8 | Wire.read();
-
-  AccY = Wire.read() << 8 | Wire.read();
-
-  AccZ = Wire.read() << 8 | Wire.read();
-
-
-
-  Wire.read(); Wire.read(); // skip temperature
-
-
-
-  GyroX = Wire.read() << 8 | Wire.read();
-
-  GyroY = Wire.read() << 8 | Wire.read();
-
-  GyroZ = Wire.read() << 8 | Wire.read();
-
-
-
-  Serial.print("Accel: ");
-
-  Serial.print(AccX); Serial.print(", ");
-
-  Serial.print(AccY); Serial.print(", ");
-
-  Serial.print(AccZ);
-
-
-
-  Serial.print(" | Gyro: ");
-
-  Serial.print(GyroX); Serial.print(", ");
-
-  Serial.print(GyroY); Serial.print(", ");
-
-  Serial.println(GyroZ);
-
-
-
-  delay(500);
-
+  delay(200);
 }
