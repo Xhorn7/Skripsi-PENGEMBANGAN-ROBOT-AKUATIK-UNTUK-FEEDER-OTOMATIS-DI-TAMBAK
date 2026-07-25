@@ -490,7 +490,7 @@ class FeederGUI(ctk.CTk):
         self.mission_start = time.monotonic()
         self.mission_running = True
         self.heartbeat_enabled = True
-        self.sw_heartbeat.select()
+        self.sw_heartbeat.select() # type: ignore
 
         self.logger.log(
             "MISI",
@@ -670,18 +670,18 @@ class FeederGUI(ctk.CTk):
                         f"{'terkirim' if ok else 'GAGAL (cek NRF)'}")
 
     def _on_toggle_nrf(self):
-        on = bool(self.sw_nrf.get())
+        on = bool(self.sw_nrf.get()) # type: ignore
         self.link.tx_enabled = on
         self.logger.log("KOMPONEN", f"NRF TX di-{'AKTIFKAN' if on else 'MATIKAN'}")
 
     def _on_toggle_heartbeat(self):
-        self.heartbeat_enabled = bool(self.sw_heartbeat.get())
+        self.heartbeat_enabled = bool(self.sw_heartbeat.get()) # type: ignore
         self.logger.log("KOMPONEN",
                         f"Heartbeat PING di-{'AKTIFKAN' if self.heartbeat_enabled else 'MATIKAN'}"
                         + ("" if self.heartbeat_enabled else " (robot failsafe stop ~3s)"))
 
     def _on_toggle_motor(self):
-        on = bool(self.sw_motor.get())
+        on = bool(self.sw_motor.get()) # type: ignore
         self.motor_armed = on
         if not on:
             # matikan motor secara REAL lewat perintah STOP
@@ -839,7 +839,7 @@ class FeederGUI(ctk.CTk):
         if snap.phase == Phase.DONE and self.mission_running:
             self.mission_running = False
             self.heartbeat_enabled = False
-            self.sw_heartbeat.deselect()
+            self.sw_heartbeat.deselect() # type: ignore
             self.logger.log("MISI", "MISI SELESAI (estimasi timeline habis)")
 
         self.lbl_phase.configure(

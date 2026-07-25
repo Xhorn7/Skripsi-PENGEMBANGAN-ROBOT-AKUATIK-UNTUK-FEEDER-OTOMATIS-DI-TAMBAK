@@ -46,7 +46,7 @@ def run_gui():
 def run_cli():
     import time
     import threading
-    from pyrf24 import RF24, RF24_PA_LOW, RF24_250KBPS
+    from pyrf24 import RF24, RF24_PA_LOW, RF24_250KBPS # type: ignore
 
     radio = RF24(24, 0)
 
