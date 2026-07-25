@@ -725,8 +725,8 @@ if __name__ == "__main__":
     sample = ("Angle -> X: 1.23\tY: -4.56\tZ(Yaw): 88.90   "
               "| Gyro -> X: 0.10\tY: -0.20\tZ: 12.30")
     r = parse_mpu_line(sample)
-    print(f"\nParse MPU: roll={r.angle_x} pitch={r.angle_y} yaw={r.angle_z} "
-          f"gyroZ={r.gyro_z}")
+    print(f"\nParse MPU: roll={r.angle_x} pitch={r.angle_y} yaw={r.angle_z} " # type: ignore
+          f"gyroZ={r.gyro_z}") # type: ignore
     assert r and abs(r.angle_z - 88.90) < 1e-6, "parser MPU gagal"
 
     # ActivityLogger
