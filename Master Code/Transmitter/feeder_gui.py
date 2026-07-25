@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import threading
 import time
+import tkinter as tk
 from datetime import datetime
 from tkinter import filedialog, messagebox
 
@@ -37,6 +38,8 @@ except ImportError:
 
 from feeder_core import (
     ActivityLogger,
+    CoveragePlan,
+    CORNER_LABEL,
     LogEvent,
     MissionEstimator,
     MPUReading,
@@ -44,12 +47,19 @@ from feeder_core import (
     Phase,
     RadioLink,
     HEARTBEAT_INTERVAL_S,
+    LANE_WIDTH_M,
+    ROBOT_SPEED_MPS,
     MOTOR_KV,
     BATTERY_V,
+    encode_mission,
     estimate_rpm,
+    plan_coverage,
     FULL_PWM,
     STOP_PWM,
 )
+
+# label sudut (GUI) -> kode titik awal (BL/BR/TL/TR)
+LABEL_TO_CORNER = {v: k for k, v in CORNER_LABEL.items()}
 
 # ---- warna status -----------------------------------------------------
 COLOR_OK    = "#2ecc71"   # hijau
@@ -82,6 +92,11 @@ class FeederGUI(ctk.CTk):
         self.heartbeat_enabled = True
         self.motor_armed = True          # False = motor dimatikan (STOP terkirim)
 
+        # perencanaan jalur (path planning)
+        self.plan: CoveragePlan | None = None
+        self.start_corner = "BL"         # titik awal robot (sudut tambak)
+        self._active_entry: ctk.CTkEntry | None = None   # target keypad
+
         # MPU (jalur serialUSB terpisah dari NRF)
         self.mpu = MPUSerialReader()
         self.mpu_record = False          # rekam pembacaan MPU ke log
@@ -111,12 +126,17 @@ class FeederGUI(ctk.CTk):
         self.grid_rowconfigure(0, weight=1)
 
         # ---------- KOLOM KIRI: kontrol ----------
-        left = ctk.CTkScrollableFrame(self, width=340, label_text="KONTROL")
+        left = ctk.CTkScrollableFrame(self, width=360, label_text="KONTROL & PERENCANAAN")
         left.grid(row=0, column=0, sticky="nsew", padx=(10, 5), pady=10)
 
         self._build_mission_panel(left)
+        self._build_keypad_panel(left)          # keypad numerik (layar sentuh)
+        self._build_plan_panel(left)            # kanvas preview + daftar segmen
         self._build_component_panel(left)
         self._build_sim_panel(left)
+
+        # tampilkan preview jalur awal setelah UI siap
+        self.after(200, self._refresh_plan)
 
         # ---------- KOLOM KANAN: status + telemetri + MPU + log ----------
         right = ctk.CTkFrame(self, fg_color="transparent")
@@ -131,38 +151,108 @@ class FeederGUI(ctk.CTk):
 
     # ---- panel misi --------------------------------------------------
 
+    def _num_row(self, parent, label, placeholder, default=""):
+        """Baris input angka + pelacakan fokus (agar keypad tahu target)."""
+        row = ctk.CTkFrame(parent, fg_color="transparent")
+        row.pack(fill="x", padx=10, pady=4)
+        ctk.CTkLabel(row, text=label, width=104, anchor="w").pack(side="left")
+        e = ctk.CTkEntry(row, placeholder_text=placeholder)
+        e.pack(side="left", fill="x", expand=True)
+        if default:
+            e.insert(0, default)
+        e.bind("<FocusIn>", lambda ev, en=e, nm=label: self._set_active_entry(en, nm))
+        e.bind("<KeyRelease>", lambda ev: self._refresh_plan())
+        return e
+
     def _build_mission_panel(self, parent):
         f = ctk.CTkFrame(parent)
         f.pack(fill="x", pady=(0, 10))
-        ctk.CTkLabel(f, text="MISI TAMBAK", font=("", 15, "bold")).pack(pady=(8, 6))
+        ctk.CTkLabel(f, text="MISI TAMBAK (persegi)", font=("", 15, "bold")).pack(pady=(8, 2))
+        ctk.CTkLabel(f, text="ketuk kolom lalu pakai keypad di bawah",
+                     font=("", 10), text_color=COLOR_IDLE).pack(pady=(0, 4))
 
-        row = ctk.CTkFrame(f, fg_color="transparent")
-        row.pack(fill="x", padx=10)
-        ctk.CTkLabel(row, text="Panjang (m)", width=90, anchor="w").pack(side="left")
-        self.entry_panjang = ctk.CTkEntry(row, placeholder_text="mis. 10")
-        self.entry_panjang.pack(side="left", fill="x", expand=True)
+        self.entry_panjang = self._num_row(f, "Panjang (m)", "mis. 10", "10")
+        self.entry_lebar = self._num_row(f, "Lebar (m)", "mis. 4", "4")
+        self.entry_lanew = self._num_row(f, "Lebar lintasan (m)", "mis. 1", "1")
+        self.entry_speed = self._num_row(f, "Kecepatan (m/s)", "mis. 0.5", "0.5")
 
-        row2 = ctk.CTkFrame(f, fg_color="transparent")
-        row2.pack(fill="x", padx=10, pady=6)
-        ctk.CTkLabel(row2, text="Lebar (m)", width=90, anchor="w").pack(side="left")
-        self.entry_lebar = ctk.CTkEntry(row2, placeholder_text="mis. 4")
-        self.entry_lebar.pack(side="left", fill="x", expand=True)
+        # titik awal robot (sudut tambak)
+        row_c = ctk.CTkFrame(f, fg_color="transparent")
+        row_c.pack(fill="x", padx=10, pady=4)
+        ctk.CTkLabel(row_c, text="Titik awal", width=104, anchor="w").pack(side="left")
+        self.opt_corner = ctk.CTkOptionMenu(
+            row_c, values=list(CORNER_LABEL.values()), command=self._on_corner_select)
+        self.opt_corner.set(CORNER_LABEL[self.start_corner])
+        self.opt_corner.pack(side="left", fill="x", expand=True)
 
         row3 = ctk.CTkFrame(f, fg_color="transparent")
         row3.pack(fill="x", padx=10, pady=(0, 4))
-        ctk.CTkLabel(row3, text="Mode", width=90, anchor="w").pack(side="left")
+        ctk.CTkLabel(row3, text="Mode", width=104, anchor="w").pack(side="left")
         ctk.CTkLabel(row3, text="AUTO (zigzag)", anchor="w",
                      text_color=COLOR_OK).pack(side="left")
+
+        self.btn_preview = ctk.CTkButton(f, text="⟳  PREVIEW JALUR",
+                                         fg_color=COLOR_WARN, hover_color="#d68910",
+                                         command=self._refresh_plan)
+        self.btn_preview.pack(fill="x", padx=10, pady=(6, 4))
 
         self.btn_send = ctk.CTkButton(f, text="▶  KIRIM MISI",
                                       fg_color=COLOR_OK, hover_color="#27ae60",
                                       command=self._on_send_mission)
-        self.btn_send.pack(fill="x", padx=10, pady=(6, 4))
+        self.btn_send.pack(fill="x", padx=10, pady=(2, 4))
 
         self.btn_stop = ctk.CTkButton(f, text="■  STOP MISI",
                                       fg_color=COLOR_BAD, hover_color="#c0392b",
                                       command=self._on_stop_mission)
         self.btn_stop.pack(fill="x", padx=10, pady=(0, 10))
+
+    # ---- keypad numerik (untuk layar sentuh tanpa keyboard) ----------
+
+    def _build_keypad_panel(self, parent):
+        f = ctk.CTkFrame(parent)
+        f.pack(fill="x", pady=(0, 10))
+        ctk.CTkLabel(f, text="KEYPAD (layar sentuh)", font=("", 15, "bold")).pack(pady=(8, 2))
+        self.lbl_keypad = ctk.CTkLabel(f, text="ketuk kolom input dulu",
+                                       font=("", 10), text_color=COLOR_IDLE)
+        self.lbl_keypad.pack(pady=(0, 6))
+
+        grid = ctk.CTkFrame(f, fg_color="transparent")
+        grid.pack(pady=(0, 6))
+        keys = [["7", "8", "9"], ["4", "5", "6"], ["1", "2", "3"], ["0", ".", "back"]]
+        for r, rowk in enumerate(keys):
+            for cc, k in enumerate(rowk):
+                txt = "⌫" if k == "back" else k
+                ctk.CTkButton(grid, text=txt, width=70, height=46,
+                              font=("", 18, "bold"),
+                              command=lambda ch=k: self._keypad_press(ch)
+                              ).grid(row=r, column=cc, padx=4, pady=4)
+        ctk.CTkButton(f, text="Hapus (C)", fg_color=COLOR_IDLE, hover_color="#616a6b",
+                      command=lambda: self._keypad_press("clear")).pack(
+            fill="x", padx=10, pady=(0, 10))
+
+    # ---- panel preview jalur (kanvas + daftar segmen) ----------------
+
+    def _build_plan_panel(self, parent):
+        f = ctk.CTkFrame(parent)
+        f.pack(fill="x", pady=(0, 10))
+        ctk.CTkLabel(f, text="PREVIEW JALUR (klik peta = titik awal)",
+                     font=("", 15, "bold")).pack(pady=(8, 2))
+
+        self.canvas = tk.Canvas(f, width=320, height=210, highlightthickness=0,
+                                bg="#0e1b24", bd=0)
+        self.canvas.pack(padx=10, pady=(2, 4))
+        self.canvas.bind("<Button-1>", self._on_canvas_click)
+        self.canvas.bind("<Configure>", lambda ev: self._draw_pond())
+
+        self.lbl_plan_info = ctk.CTkLabel(f, text="—", font=("", 11),
+                                          text_color=COLOR_OK, justify="left")
+        self.lbl_plan_info.pack(pady=(0, 4))
+
+        ctk.CTkLabel(f, text="Langkah (path -> maju/belok):",
+                     font=("", 11), text_color=COLOR_IDLE).pack(anchor="w", padx=12)
+        self.seg_box = ctk.CTkTextbox(f, height=120, font=("Consolas", 12))
+        self.seg_box.pack(fill="x", padx=10, pady=(2, 10))
+        self.seg_box.configure(state="disabled")
 
     # ---- panel komponen ---------------------------------------------
 
@@ -380,35 +470,195 @@ class FeederGUI(ctk.CTk):
     # ==================================================================
 
     def _on_send_mission(self):
-        try:
-            panjang = float(self.entry_panjang.get().strip())
-            lebar = float(self.entry_lebar.get().strip())
-        except ValueError:
-            messagebox.showerror("Input salah", "Panjang & Lebar harus angka (meter).")
-            return
-        if panjang <= 0 or lebar <= 0:
-            messagebox.showerror("Input salah", "Panjang & Lebar harus > 0.")
+        self._refresh_plan()
+        plan = self.plan
+        if plan is None or plan.n_lanes <= 0:
+            messagebox.showerror(
+                "Input salah",
+                "Dimensi tambak belum valid — Panjang & Lebar harus angka > 0.")
             return
         if not self.motor_armed:
             messagebox.showwarning("Motor mati",
                                    "Nyalakan komponen Motor dulu sebelum kirim misi.")
             return
 
-        payload = f"P={panjang:g};L={lebar:g};MODE=AUTO".encode()
+        payload = encode_mission(plan)
         ok = self.link.send_retry(payload)
 
-        self.estimator = MissionEstimator(panjang, lebar)
-        s = self.estimator.summary()
+        self.estimator = MissionEstimator(plan.panjang_m, plan.lebar_m,
+                                          plan.speed_mps, plan.lane_width_m)
         self.mission_start = time.monotonic()
         self.mission_running = True
         self.heartbeat_enabled = True
         self.sw_heartbeat.select()
 
-        self.logger.log("MISI", f"Kirim P={panjang:g} L={lebar:g} -> "
-                        f"{'ACK OK' if ok else 'TANPA ACK'} | "
-                        f"{s['n_lanes']} jalur, est {s['total_s']}s")
+        self.logger.log(
+            "MISI",
+            f"Kirim [{payload.decode()}] -> {'ACK OK' if ok else 'TANPA ACK'} | "
+            f"{plan.n_lanes} jalur, mulai {CORNER_LABEL[plan.start_corner]}, "
+            f"belok pertama {'kanan' if plan.first_turn == 'R' else 'kiri'}, "
+            f"~{plan.est_time_s:.0f}s")
         if not ok:
             self.logger.log("PERINGATAN", "Misi tak ter-ACK — cek koneksi NRF/robot")
+
+    # ==================================================================
+    # PERENCANAAN JALUR: keypad, titik awal, kanvas, daftar segmen
+    # ==================================================================
+
+    @staticmethod
+    def _read_float(entry, default=None):
+        s = entry.get().strip().replace(",", ".")
+        if not s:
+            return default
+        try:
+            return float(s)
+        except ValueError:
+            return None
+
+    def _set_active_entry(self, entry, name):
+        """Dipanggil saat sebuah kolom input mendapat fokus (untuk keypad)."""
+        self._active_entry = entry
+        self.lbl_keypad.configure(text=f"input aktif: {name}", text_color=COLOR_OK)
+
+    def _keypad_press(self, ch):
+        en = self._active_entry
+        if en is None:
+            self.lbl_keypad.configure(text="ketuk kolom input dulu",
+                                      text_color=COLOR_WARN)
+            return
+        if ch == "clear":
+            en.delete(0, "end")
+        elif ch == "back":
+            s = en.get()
+            en.delete(0, "end")
+            en.insert(0, s[:-1])
+        elif ch == ".":
+            if "." not in en.get():
+                en.insert("end", ".")
+        else:
+            en.insert("end", ch)
+        self._refresh_plan()
+
+    def _on_corner_select(self, label):
+        self.start_corner = LABEL_TO_CORNER.get(label, "BL")
+        self._refresh_plan()
+
+    def _refresh_plan(self):
+        P = self._read_float(self.entry_panjang)
+        L = self._read_float(self.entry_lebar)
+        lw = self._read_float(self.entry_lanew, LANE_WIDTH_M) or LANE_WIDTH_M
+        spd = self._read_float(self.entry_speed, ROBOT_SPEED_MPS) or ROBOT_SPEED_MPS
+        if P is None or L is None or P <= 0 or L <= 0:
+            self.plan = None
+        else:
+            self.plan = plan_coverage(P, L, lw, spd, self.start_corner)
+        self._draw_pond()
+        self._render_segments()
+        self._update_plan_info()
+
+    def _update_plan_info(self):
+        if not self.plan or self.plan.n_lanes <= 0:
+            self.lbl_plan_info.configure(text="Isi Panjang & Lebar lalu Preview",
+                                         text_color=COLOR_IDLE)
+            return
+        p = self.plan
+        self.lbl_plan_info.configure(
+            text=(f"{p.n_lanes} jalur  ·  {p.total_distance_m:.1f} m  ·  ~{p.est_time_s:.0f} s\n"
+                  f"mulai {CORNER_LABEL[p.start_corner]}  ·  belok pertama "
+                  f"{'kanan' if p.first_turn == 'R' else 'kiri'}"),
+            text_color=COLOR_OK)
+
+    def _render_segments(self):
+        self.seg_box.configure(state="normal")
+        self.seg_box.delete("1.0", "end")
+        if self.plan and self.plan.steps:
+            for i, st in enumerate(self.plan.steps, 1):
+                self.seg_box.insert("end", f"{i:2d}. {st.human()}\n")
+        else:
+            self.seg_box.insert("end", "(belum ada jalur — isi dimensi)\n")
+        self.seg_box.configure(state="disabled")
+
+    def _pond_geometry(self):
+        """Return (ox, oy, scale, pond_w, pond_h) atau None."""
+        if not self.plan or self.plan.panjang_m <= 0 or self.plan.lebar_m <= 0:
+            return None
+        c = self.canvas
+        W = c.winfo_width() or 320
+        H = c.winfo_height() or 210
+        if W < 10:
+            W = 320
+        if H < 10:
+            H = 210
+        margin = 22
+        pond_w = self.plan.lebar_m
+        pond_h = self.plan.panjang_m
+        scale = min((W - 2 * margin) / pond_w, (H - 2 * margin) / pond_h)
+        ox = (W - pond_w * scale) / 2
+        oy = (H - pond_h * scale) / 2
+        return ox, oy, scale, pond_w, pond_h
+
+    def _on_canvas_click(self, ev):
+        geo = self._pond_geometry()
+        if not geo:
+            return
+        ox, oy, scale, pond_w, pond_h = geo
+        x = (ev.x - ox) / scale
+        y = pond_h - (ev.y - oy) / scale
+        if not (-0.2 * pond_w <= x <= 1.2 * pond_w and
+                -0.2 * pond_h <= y <= 1.2 * pond_h):
+            return
+        left = x < pond_w / 2
+        bottom = y < pond_h / 2
+        code = ("BL" if left else "BR") if bottom else ("TL" if left else "TR")
+        self.start_corner = code
+        self.opt_corner.set(CORNER_LABEL[code])
+        self._refresh_plan()
+
+    def _draw_pond(self):
+        c = self.canvas
+        c.delete("all")
+        geo = self._pond_geometry()
+        if not geo:
+            W = c.winfo_width() or 320
+            H = c.winfo_height() or 210
+            c.create_text(max(W, 320) // 2, max(H, 210) // 2,
+                          text="Isi dimensi lalu Preview",
+                          fill="#7f8c8d", font=("", 11))
+            return
+        ox, oy, scale, pond_w, pond_h = geo
+        plan = self.plan
+        if plan is None:
+            return
+
+        def tx(x, y):
+            return ox + x * scale, oy + (pond_h - y) * scale
+
+        x0, y0 = tx(0, 0)
+        x1, y1 = tx(pond_w, pond_h)
+        c.create_rectangle(x0, y1, x1, y0, outline="#2c6da3", width=2, fill="#12232e")
+
+        # garis bantu antar-lintasan
+        lw = plan.lane_width_m
+        n = 1
+        while n * lw < pond_w - 1e-9:
+            gx, _ = tx(n * lw, 0)
+            c.create_line(gx, y1, gx, y0, fill="#1c3a4d")
+            n += 1
+
+        # jalur (polyline berpanah)
+        pts = [tx(px, py) for (px, py) in plan.waypoints]
+        for i in range(len(pts) - 1):
+            c.create_line(pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1],
+                          fill="#2ecc71", width=2, arrow="last", arrowshape=(8, 9, 3))
+
+        # penanda titik awal
+        if pts:
+            sx, sy = pts[0]
+            c.create_oval(sx - 5, sy - 5, sx + 5, sy + 5, fill="#f39c12", outline="")
+            c.create_text(sx, sy - 11, text="START", fill="#f39c12", font=("", 8, "bold"))
+
+        c.create_text((x0 + x1) / 2, y0 + 11, text=f"lebar {pond_w:g} m",
+                      fill="#7f8c8d", font=("", 8))
 
     def _on_stop_mission(self):
         # STOP: sama seperti CLI — hentikan heartbeat lalu spam STOP

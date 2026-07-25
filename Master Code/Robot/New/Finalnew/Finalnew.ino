@@ -53,6 +53,12 @@ bool missionReceived = false;
 unsigned long lastSignalMs = 0;  // heartbeat terakhir dari transmitter
 bool stopRequested = false;      // di-set true saat menerima paket "STOP"
 
+// Parameter misi OPSIONAL dari paket (default = konstanta kalibrasi di atas).
+// Dikirim GUI transmitter lewat "SPD=", "LW=", "DIR="; kalau tidak ada, pakai default.
+float robotSpeedMps  = ROBOT_SPEED_MPS;  // kecepatan jelajah (m/s)
+float laneWidthM     = LANE_WIDTH_M;     // jarak antar-lintasan (m)
+bool  firstTurnRight = true;             // arah U-turn pertama (R=kanan, L=kiri)
+
 // =========================================
 
 void armESC()
@@ -170,14 +176,16 @@ bool driveHeadingMS(float targetYaw, unsigned long durationMs)
 }
 
 // =========================================
-// Belok kanan ~90 derajat (timed), dengan cek failsafe.
+// Belok ~90 derajat (timed) ke KANAN atau KIRI, dengan cek failsafe.
+//   toRight = true  -> belok kanan (motor kanan stop, kiri maju)
+//   toRight = false -> belok kiri  (motor kiri stop, kanan maju)
 // Return true bila selesai, false bila abort.
 // =========================================
 
-bool turnRight90()
+bool turn90(bool toRight)
 {
   unsigned long start = millis();
-  turnRight();
+  if (toRight) turnRight(); else turnLeft();
   while (millis() - start < TURN_90_MS)
   {
     mpu.update();
@@ -197,6 +205,13 @@ bool turnRight90()
   }
   stopBoat();
   return true;
+}
+
+// Cari akhir sebuah token pada string paket: indeks ';' berikutnya, atau akhir string.
+int tokenEnd(const String &s, int from)
+{
+  int e = s.indexOf(';', from);
+  return (e < 0) ? (int)s.length() : e;
 }
 
 // =========================================
@@ -290,15 +305,44 @@ void loop()
 
     if (pPos >= 0 && lPos >= 0 && mPos >= 0)
     {
-      panjangTambak = data.substring(pPos + 2, data.indexOf(";", pPos)).toInt();
-      lebarTambak   = data.substring(lPos + 2, data.indexOf(";", lPos)).toInt();
-      modeRobot     = data.substring(mPos + 5);
+      panjangTambak = data.substring(pPos + 2, tokenEnd(data, pPos)).toInt();
+      lebarTambak   = data.substring(lPos + 2, tokenEnd(data, lPos)).toInt();
+      modeRobot     = data.substring(mPos + 5, tokenEnd(data, mPos));
+      modeRobot.trim();   // MODE bukan lagi field terakhir -> potong di ';'
+
+      // Parameter OPSIONAL (kompatibel-mundur). Reset ke default tiap misi baru.
+      robotSpeedMps  = ROBOT_SPEED_MPS;
+      laneWidthM     = LANE_WIDTH_M;
+      firstTurnRight = true;
+
+      int sPos = data.indexOf("SPD=");
+      if (sPos >= 0)
+      {
+        float v = data.substring(sPos + 4, tokenEnd(data, sPos)).toFloat();
+        if (v > 0) robotSpeedMps = v;
+      }
+      int wPos = data.indexOf("LW=");
+      if (wPos >= 0)
+      {
+        float v = data.substring(wPos + 3, tokenEnd(data, wPos)).toFloat();
+        if (v > 0) laneWidthM = v;
+      }
+      int dPos = data.indexOf("DIR=");
+      if (dPos >= 0)
+      {
+        String d = data.substring(dPos + 4, tokenEnd(data, dPos));
+        d.trim();
+        firstTurnRight = !d.startsWith("L");   // "L" -> kiri, selain itu kanan
+      }
 
       missionReceived = true;
 
       Serial.print("Panjang : "); Serial.println(panjangTambak);
       Serial.print("Lebar   : "); Serial.println(lebarTambak);
       Serial.print("Mode    : "); Serial.println(modeRobot);
+      Serial.print("Speed   : "); Serial.println(robotSpeedMps);
+      Serial.print("LaneW   : "); Serial.println(laneWidthM);
+      Serial.print("Belok-1 : "); Serial.println(firstTurnRight ? "KANAN" : "KIRI");
     }
     else
     {
@@ -318,9 +362,9 @@ void loop()
       return;
     }
 
-    int nLanes = (int)ceil((float)lebarTambak / LANE_WIDTH_M);
-    unsigned long laneDurationMs  = (unsigned long)((float)panjangTambak / ROBOT_SPEED_MPS * 1000.0f);
-    unsigned long shiftDurationMs = (unsigned long)(LANE_WIDTH_M / ROBOT_SPEED_MPS * 1000.0f);
+    int nLanes = (int)ceil((float)lebarTambak / laneWidthM);
+    unsigned long laneDurationMs  = (unsigned long)((float)panjangTambak / robotSpeedMps * 1000.0f);
+    unsigned long shiftDurationMs = (unsigned long)(laneWidthM / robotSpeedMps * 1000.0f);
 
     lastSignalMs = millis();  // reset heartbeat di awal misi
     stopRequested = false;    // bersihkan sisa STOP lama agar tak membatalkan misi baru
@@ -329,6 +373,7 @@ void loop()
     Serial.print("Durasi 1 jalur: "); Serial.print(laneDurationMs); Serial.println(" ms");
 
     bool aborted = false;
+    bool turnToRight = firstTurnRight;   // arah U-turn; dibalik tiap ganti lane
 
     for (int lane = 0; lane < nLanes && !aborted; lane++)
     {
@@ -345,9 +390,11 @@ void loop()
 
       if (lane < nLanes - 1)
       {
-        // U-turn = dua kali belok kanan 90 derajat (total 180 derajat),
-        // diselingi geser 1 lebar lane.
-        if (!turnRight90()) { aborted = true; break; }
+        // U-turn = dua kali belok 90 derajat KE ARAH SAMA (total 180 derajat),
+        // diselingi geser 1 lebar lane. Arah U-turn BERSELANG-SELING tiap ganti
+        // lane (kanan-kanan lalu kiri-kiri, dst) supaya geseran selalu ke sisi
+        // yang sama -> benar-benar menyapu seluruh lebar tambak (boustrophedon).
+        if (!turn90(turnToRight)) { aborted = true; break; }
         delay(300);
 
         mpu.update();
@@ -355,8 +402,10 @@ void loop()
         if (!driveHeadingMS(shiftYaw, shiftDurationMs)) { aborted = true; break; }
         delay(300);
 
-        if (!turnRight90()) { aborted = true; break; }
+        if (!turn90(turnToRight)) { aborted = true; break; }
         delay(500);
+
+        turnToRight = !turnToRight;   // lane berikutnya belok ke arah sebaliknya
       }
     }
 

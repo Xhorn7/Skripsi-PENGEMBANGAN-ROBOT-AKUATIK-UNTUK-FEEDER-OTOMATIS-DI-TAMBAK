@@ -262,9 +262,15 @@ class MissionEstimator:
     yang benar-benar sedang dijalankan robot — walau datanya estimasi.
     """
 
-    def __init__(self, panjang_m: float, lebar_m: float):
+    def __init__(self, panjang_m: float, lebar_m: float,
+                 speed_mps: float = ROBOT_SPEED_MPS,
+                 lane_width_m: float = LANE_WIDTH_M):
         self.panjang_m = panjang_m
         self.lebar_m = lebar_m
+        # speed & lane width kini bisa diatur dari GUI (dikirim ke robot lewat
+        # SPD/LW); fallback ke konstanta bila nilai tak valid.
+        self.speed_mps = speed_mps if (speed_mps and speed_mps > 0) else ROBOT_SPEED_MPS
+        self.lane_width_m = lane_width_m if (lane_width_m and lane_width_m > 0) else LANE_WIDTH_M
         self.segments: list[PhaseSegment] = []
         self.total_ms = 0.0
         self.n_lanes = 0
@@ -274,9 +280,9 @@ class MissionEstimator:
         if self.panjang_m <= 0 or self.lebar_m <= 0:
             return
 
-        n_lanes = int(math.ceil(self.lebar_m / LANE_WIDTH_M))
-        lane_ms = (self.panjang_m / ROBOT_SPEED_MPS) * 1000.0
-        shift_ms = (LANE_WIDTH_M / ROBOT_SPEED_MPS) * 1000.0
+        n_lanes = int(math.ceil(self.lebar_m / self.lane_width_m))
+        lane_ms = (self.panjang_m / self.speed_mps) * 1000.0
+        shift_ms = (self.lane_width_m / self.speed_mps) * 1000.0
         self.n_lanes = n_lanes
 
         segs: list[PhaseSegment] = []
@@ -331,10 +337,144 @@ class MissionEstimator:
         return {
             "panjang_m": self.panjang_m,
             "lebar_m": self.lebar_m,
+            "speed_mps": self.speed_mps,
+            "lane_width_m": self.lane_width_m,
             "n_lanes": self.n_lanes,
             "total_ms": self.total_ms,
             "total_s": round(self.total_ms / 1000.0, 1),
         }
+
+
+# =====================================================================
+# 2b. PATH PLANNER  —  terjemahkan tambak persegi -> daftar segmen
+#     "maju x meter / belok y derajat" (pola boustrophedon/zigzag)
+# =====================================================================
+#
+# Ini mewujudkan arahan: aplikasi memasukkan dimensi tambak + titik awal +
+# lebar lintasan + speed, lalu menerjemahkannya menjadi PATH eksplisit yang
+# harus diikuti robot. Hasilnya dipakai untuk:
+#     - visualisasi jalur di GUI (kanvas),
+#     - daftar langkah "Maju .. m / Belok .. derajat",
+#     - encode paket misi yang dikirim ke robot (encode_mission).
+
+# Titik awal (sudut tambak) -> label untuk GUI.
+CORNER_LABEL = {
+    "BL": "Kiri-Bawah", "BR": "Kanan-Bawah",
+    "TL": "Kiri-Atas", "TR": "Kanan-Atas",
+}
+
+
+@dataclass
+class PathStep:
+    """Satu langkah path: maju sekian meter, atau belok sekian derajat."""
+    kind: str                 # "forward" | "turn"
+    meters: float = 0.0
+    degrees: float = 0.0
+    direction: str = ""       # "R" (kanan) | "L" (kiri) untuk turn
+
+    def human(self) -> str:
+        if self.kind == "forward":
+            return f"Maju {self.meters:.1f} m"
+        arah = "kanan" if self.direction == "R" else "kiri"
+        return f"Belok {arah} {self.degrees:.0f} derajat"
+
+
+@dataclass
+class CoveragePlan:
+    panjang_m: float
+    lebar_m: float
+    lane_width_m: float
+    speed_mps: float
+    start_corner: str
+    first_turn: str           # arah belok pertama "R"/"L" (dikirim ke robot)
+    n_lanes: int
+    steps: list               # list[PathStep]
+    waypoints: list           # list[(x, y)] meter, utk kanvas
+    total_distance_m: float
+    est_time_s: float
+
+
+def plan_coverage(panjang_m: float, lebar_m: float,
+                  lane_width_m: float = LANE_WIDTH_M,
+                  speed_mps: float = ROBOT_SPEED_MPS,
+                  start_corner: str = "BL") -> CoveragePlan:
+    """
+    Bangun jalur sapuan zigzag (boustrophedon) untuk tambak persegi.
+
+    Koordinat: x menyusuri LEBAR (0..lebar), y menyusuri PANJANG (0..panjang).
+    Robot menjelajah lurus arah-y tiap lintasan, lalu U-turn menggeser sejauh
+    lane_width arah-x. Arah belok U-turn BERSELANG-SELING (kanan-kanan lalu
+    kiri-kiri, dst) supaya benar-benar menyapu seluruh lebar — bukan bolak-balik
+    di kolom yang sama.
+    """
+    if start_corner not in CORNER_LABEL:
+        start_corner = "BL"
+    lw = lane_width_m if (lane_width_m and lane_width_m > 0) else LANE_WIDTH_M
+    spd = speed_mps if (speed_mps and speed_mps > 0) else ROBOT_SPEED_MPS
+
+    if panjang_m <= 0 or lebar_m <= 0:
+        return CoveragePlan(panjang_m, lebar_m, lw, spd, start_corner,
+                            "R", 0, [], [], 0.0, 0.0)
+
+    n_lanes = max(1, int(math.ceil(lebar_m / lw)))
+
+    x_left = start_corner in ("BL", "TL")     # mulai di sisi kiri (x=0)?
+    bottom = start_corner in ("BL", "BR")     # mulai di sisi bawah (y=0)?
+    x0 = 0.0 if x_left else lebar_m
+    y0 = 0.0 if bottom else panjang_m
+    step = lw if x_left else -lw              # arah geser antar-lintasan
+
+    # ---- bangun waypoints (titik belok) ----
+    pts = [(x0, y0)]
+    cur = (x0, y0)
+    for k in range(n_lanes):
+        other_y = panjang_m if cur[1] == 0.0 else 0.0     # ujung seberang
+        cur = (cur[0], other_y)
+        pts.append(cur)
+        if k < n_lanes - 1:
+            nx = min(max(cur[0] + step, 0.0), lebar_m)     # geser + jaga dlm tambak
+            cur = (nx, cur[1])
+            pts.append(cur)
+
+    # ---- turunkan langkah maju/belok dari waypoints ----
+    steps: list[PathStep] = []
+    prev_h = None
+    total = 0.0
+    for i in range(len(pts) - 1):
+        a, b = pts[i], pts[i + 1]
+        vx, vy = b[0] - a[0], b[1] - a[1]
+        dist = math.hypot(vx, vy)
+        if dist < 1e-9:
+            continue
+        if prev_h is not None:
+            cross = prev_h[0] * vy - prev_h[1] * vx   # z cross product
+            dot = prev_h[0] * vx + prev_h[1] * vy
+            ang = math.degrees(math.atan2(abs(cross), dot))
+            if ang > 1e-6:
+                direction = "R" if cross < 0 else "L"   # searah jarum jam = kanan
+                steps.append(PathStep("turn", degrees=round(ang), direction=direction))
+        steps.append(PathStep("forward", meters=dist))
+        total += dist
+        prev_h = (vx, vy)
+
+    # arah belok pertama = arah U-turn pertama (dikirim ke robot sbg DIR)
+    first_turn = next((s.direction for s in steps if s.kind == "turn"), "R")
+
+    est = MissionEstimator(panjang_m, lebar_m, spd, lw)
+    return CoveragePlan(panjang_m, lebar_m, lw, spd, start_corner, first_turn,
+                        n_lanes, steps, pts, total, round(est.total_ms / 1000.0, 1))
+
+
+def encode_mission(plan: CoveragePlan) -> bytes:
+    """
+    Susun paket misi untuk robot. Kompatibel-mundur dgn firmware lama
+    (P/L/MODE tetap di depan) dan menambah SPD/LW/DIR yang diabaikan bila
+    firmware belum mendukung.
+        P=<panjang>;L=<lebar>;MODE=AUTO;SPD=<m/s>;LW=<m>;DIR=<R|L>
+    """
+    return (f"P={plan.panjang_m:g};L={plan.lebar_m:g};MODE=AUTO;"
+            f"SPD={plan.speed_mps:g};LW={plan.lane_width_m:g};"
+            f"DIR={plan.first_turn}").encode()
 
 
 # =====================================================================
@@ -544,7 +684,30 @@ if __name__ == "__main__":
     ok = link.send_retry(b"P=10;L=4;MODE=AUTO")
     print(f"Kirim misi -> ACK={ok}  robot_reachable={link.robot_reachable()}")
 
-    # MissionEstimator
+    # PATH PLANNER — terjemahkan tambak -> segmen maju/belok
+    print("\n== Path planner (tambak 10x4, lane 1m, mulai Kiri-Bawah) ==")
+    plan = plan_coverage(10, 4, lane_width_m=1.0, speed_mps=0.5, start_corner="BL")
+    print(f"n_lanes={plan.n_lanes}  first_turn={plan.first_turn}  "
+          f"jarak={plan.total_distance_m:.1f} m  est={plan.est_time_s}s")
+    print("Paket ->", encode_mission(plan).decode())
+    for i, st in enumerate(plan.steps, 1):
+        print(f"  {i:2d}. {st.human()}")
+
+    # cek pola belok berselang-seling (R,R,L,L,R,R,...) untuk boustrophedon benar
+    turns = [s.direction for s in plan.steps if s.kind == "turn"]
+    assert turns == ["R", "R", "L", "L", "R", "R"], f"pola belok salah: {turns}"
+    fwd = [round(s.meters, 3) for s in plan.steps if s.kind == "forward"]
+    assert fwd == [10, 1, 10, 1, 10, 1, 10], f"jarak segmen salah: {fwd}"
+    # titik awal harus di sudut kiri-bawah (0,0)
+    assert plan.waypoints[0] == (0.0, 0.0)
+    # arah belok pertama tiap sudut
+    assert plan_coverage(10, 4, start_corner="BR").first_turn == "L"
+    assert plan_coverage(10, 4, start_corner="TR").first_turn == "R"
+    # speed lebih cepat -> waktu lebih singkat
+    assert plan_coverage(10, 4, speed_mps=1.0).est_time_s < plan.est_time_s
+    print("  [OK] pola belok berselang-seling & encoding valid")
+
+    # MissionEstimator (memakai speed & lane width sama dgn plan)
     est = MissionEstimator(panjang_m=10, lebar_m=4)
     print("\nRingkasan misi:", est.summary())
     print(f"Jumlah segmen fase: {len(est.segments)}")
