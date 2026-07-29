@@ -175,8 +175,9 @@ p("GUI berjalan di sisi <b>Transmitter</b> (Raspberry Pi) sebagai pengganti CLI.
   "belok diperbaiki agar sapuan menutupi seluruh tambak (lihat 4.5). "
   "Konsekuensi batasan teknis yang teridentifikasi pada tahap analisis:")
 bullets([
-    "<b>Komunikasi satu arah.</b> Raspberry hanya mengirim; robot hanya menerima. "
-    "Robot tidak mengirim telemetri balik.",
+    "<b>Komunikasi dua arah half-duplex.</b> Radio NRF dipakai bergantian (&quot;gantian&quot; "
+    "seperti radio HT): Pi mengirim perintah/PING, robot membalas telemetri MPU di sela-selanya "
+    "(alamat balik 00002). Bukan full-duplex, jadi kirim/terima tidak bersamaan.",
     "<b>Tidak ada sensor RPM/encoder</b> pada robot. Maka nilai RPM &amp; kecepatan "
     "yang ditampilkan adalah <b>ESTIMASI</b> yang dihitung dari nilai PWM throttle, "
     "bukan hasil pengukuran.",
@@ -252,6 +253,8 @@ table(["Kode", "Kebutuhan", "Status"],
        ["RF-10", "Keypad numerik pada layar (operasi tanpa keyboard fisik)",
         "Terpenuhi"],
        ["RF-11", "Mengirim parameter misi ke robot (kecepatan, lebar lintasan, arah belok)",
+        "Terpenuhi (real)"],
+       ["RF-12", "Menerima telemetri MPU (roll/pitch/yaw) balik dari robot via radio (2 arah)",
         "Terpenuhi (real)"]],
       [1.7 * cm, 10.3 * cm, 3 * cm])
 h2("3.2 Kebutuhan Non-Fungsional")
@@ -287,13 +290,20 @@ table(["Paket", "Arah", "Makna"],
         "Pi -&gt; Robot",
         "Perintah misi zigzag + kecepatan (SPD), lebar lintasan (LW), arah belok "
         "pertama (DIR). Field SPD/LW/DIR opsional; bila tak ada robot memakai default."],
-       ["PING", "Pi -&gt; Robot", "Heartbeat (jaga failsafe) tiap 0,5 s"],
+       ["PING", "Pi -&gt; Robot", "Heartbeat (jaga failsafe) tiap 0,5 s + pemicu giliran telemetri"],
        ["STOP", "Pi -&gt; Robot", "Batalkan misi / matikan motor"],
        ["(ACK otomatis)", "Robot -&gt; Pi",
-        "Auto-ACK NRF; True = robot hidup &amp; terjangkau"]],
+        "Auto-ACK NRF; True = robot hidup &amp; terjangkau"],
+       ["R=&lt;roll&gt;;P=&lt;pitch&gt;;Y=&lt;yaw&gt;", "Robot -&gt; Pi",
+        "Telemetri MPU (alamat balik 00002, NOACK) — komunikasi 2 arah half-duplex"]],
       [6 * cm, 2.6 * cm, 6.4 * cm])
 p("Paket lama <b>P=..;L=..;MODE=AUTO</b> tetap valid — firmware baru mengabaikan "
   "field yang tak ada dan memakai konstanta default, sehingga tidak memutus kompatibilitas.")
+p("<b>Telemetri 2 arah (half-duplex &quot;gantian&quot;).</b> NRF24 tidak bisa kirim &amp; terima "
+  "bersamaan, jadi kedua sisi bergantian seperti radio HT: Pi mengirim PING (mode TX) lalu "
+  "mendengar ~70 ms (mode RX); robot yang menerima PING sejenak <i>stopListening</i>, mengirim "
+  "data MPU tanpa ACK (~1 ms), lalu <i>startListening</i> lagi. Window TX yang sangat pendek + "
+  "throttle menjaga heartbeat &amp; kendali tidak terganggu.")
 h2("4.3 Dasar Estimasi Telemetri")
 p("Karena tak ada sensor, GUI menghitung PWM yang <i>seharusnya</i> dijalankan robot "
   "pada detik ke-t (mengikuti pola gerak firmware), lalu mengonversinya:")
@@ -302,18 +312,19 @@ code("throttle = (PWM - 1000) / (2000 - 1000)\n"
      "speed_est= ROBOT_SPEED_MPS * throttle / throttle(CRUISE_PWM)")
 note("Konstanta MOTOR_KV, BATTERY_V, CRUISE_PWM, TURN_90_MS wajib disamakan dengan "
      "firmware &amp; dikalibrasi pada pengujian air agar estimasi mendekati kenyataan.")
-h2("4.4 Integrasi Data MPU6050 (Serial USB)")
-p("Berbeda dengan telemetri gerak yang berupa estimasi, data orientasi diambil "
-  "<b>langsung dari sensor MPU6050</b>. Sketsa <b>mpu.ino</b> (Test Part/MPU Test) "
-  "pada ESP32 mencetak orientasi ke Serial tiap 200 ms; GUI membacanya melalui "
-  "<b>pyserial</b> pada jalur USB yang <b>terpisah dari NRF</b>. Kelas "
-  "<b>MPUSerialReader</b> mem-parse baris berikut:")
+h2("4.4 Integrasi Data MPU6050 (Radio NRF &amp; Serial USB)")
+p("Data orientasi diambil <b>langsung dari sensor MPU6050</b> (bukan estimasi) melalui "
+  "<b>dua jalur</b>: (1) <b>radio NRF 2 arah</b> — robot mengirim balik roll/pitch/yaw "
+  "(<b>MPU via NRF, saat misi/berlayar bebas</b>); dan (2) <b>serial USB</b> via "
+  "<b>pyserial</b> (kelas <b>MPUSerialReader</b>) untuk fase <b>uji bench</b> saat board "
+  "tertambat kabel. GUI otomatis memakai jalur radio bila serial tidak tersambung.")
+p("Format yang di-parse: dari radio <b>R=&lt;roll&gt;;P=&lt;pitch&gt;;Y=&lt;yaw&gt;</b>; "
+  "dari serial (sketsa <b>mpu.ino</b>) baris berikut:")
 code("Angle -> X: &lt;roll&gt;  Y: &lt;pitch&gt;  Z(Yaw): &lt;yaw&gt;  "
      "| Gyro -> X: &lt;gx&gt; Y: &lt;gy&gt; Z: &lt;gz&gt;")
-p("Roll (X), Pitch (Y), dan Yaw/heading (Z) ditampilkan realtime dan dapat "
-  "direkam ke log (1 Hz) untuk diekspor. Jalur serial cocok untuk fase "
-  "<b>kalibrasi/uji bench</b> saat board tertambat kabel; saat robot berlayar "
-  "bebas, data MPU realtime memerlukan telemetri NRF dua arah (iterasi berikutnya).")
+p("Roll (X), Pitch (Y), dan Yaw/heading (Z) ditampilkan realtime dan dapat direkam ke "
+  "log untuk diekspor. Dengan jalur radio, heading kini <b>terbaca nyata saat robot "
+  "berlayar bebas</b> — tidak lagi bergantung pada kabel USB.")
 
 h2("4.5 Perencanaan Jalur (Path Planning)")
 p("Fungsi <b>plan_coverage()</b> menerjemahkan tambak persegi menjadi jalur sapuan "
@@ -357,8 +368,8 @@ bullets([
     "<b>Kontrol Komponen:</b> saklar NRF TX, Heartbeat PING, Motor (efek nyata "
     "lewat STOP); indikator monitor Motor Kiri/Kanan &amp; MPU.",
     "<b>Telemetri:</b> fase misi, progress bar, gauge RPM/throttle/speed L &amp; R.",
-    "<b>Sensor MPU6050:</b> pilih port serial, tampil Roll/Pitch/Yaw realtime, "
-    "opsi rekam ke log.",
+    "<b>Sensor MPU6050:</b> tampil Roll/Pitch/Yaw realtime via <b>radio NRF (2 arah)</b> "
+    "saat robot berlayar, atau serial USB saat uji bench; opsi rekam ke log.",
     "<b>Log:</b> tampilan realtime + tombol Export CSV / Export TXT / Clear.",
 ])
 h2("5.2 Mode Simulasi")
@@ -398,7 +409,9 @@ table(["Uji", "Skenario", "Hasil Diharapkan"],
        ["T-11", "Ganti titik awal (menu / klik kanvas)",
         "Jalur &amp; arah belok pertama (DIR) berubah sesuai sudut awal"],
        ["T-12", "Kirim misi dgn kecepatan berbeda",
-        "Paket memuat SPD/LW/DIR; estimasi waktu menyesuaikan kecepatan"]],
+        "Paket memuat SPD/LW/DIR; estimasi waktu menyesuaikan kecepatan"],
+       ["T-13", "Misi berjalan (tanpa serial USB)",
+        "Panel MPU tampil heading dari radio (sumber &quot;NRF&quot;) &amp; masuk log"]],
       [1.4 * cm, 6.6 * cm, 7 * cm])
 
 # ===================================================================== 7
@@ -471,12 +484,14 @@ p("Prototipe GUI berhasil memenuhi seluruh kebutuhan fungsional sesuai lingkup "
   "mempermudah evaluasi. <b>Iterasi ini</b> &mdash; menindaklanjuti umpan balik pembimbing "
   "&mdash; menambahkan <b>perencanaan jalur</b> (dimensi + titik awal + lebar lintasan + "
   "kecepatan -&gt; daftar langkah maju/belok), <b>keypad layar</b> untuk operasi tanpa "
-  "keyboard, <b>preview jalur</b> point-and-click, protokol misi diperluas, serta "
-  "<b>perbaikan pola belok</b> agar sapuan menutupi seluruh tambak. Sesuai Prototyping "
-  "Model, keterbatasan yang tersisa menjadi rencana iterasi selanjutnya:")
+  "keyboard, <b>preview jalur</b> point-and-click, protokol misi diperluas, "
+  "<b>perbaikan pola belok</b> agar sapuan menutupi seluruh tambak, serta "
+  "<b>telemetri MPU 2 arah</b> lewat radio (half-duplex &quot;gantian&quot;) sehingga heading "
+  "terbaca nyata saat robot berlayar. Sesuai Prototyping Model, keterbatasan yang tersisa "
+  "menjadi rencana iterasi selanjutnya:")
 bullets([
-    "Menambah <b>telemetri dua arah</b> (ACK payload NRF) agar status komponen &amp; "
-    "throttle asli dikirim balik dari robot.",
+    "Memperluas <b>isi telemetri balik</b> (status komponen, throttle asli, baterai) di "
+    "atas jalur 2 arah yang sudah ada.",
     "Memasang <b>sensor RPM (hall/encoder)</b> untuk mengganti estimasi dengan data ukur.",
     "Menambah perintah firmware untuk <b>kontrol komponen individual</b> (motor kiri/kanan, MPU).",
     "Belok berbasis <b>sudut yaw MPU</b> (bukan durasi), agar belokan presisi tanpa "

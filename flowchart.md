@@ -13,9 +13,10 @@ flowchart LR
     subgraph RPi["🖥️ Raspberry Pi 4 (Transmitter)"]
         A["Input Ukuran Tambak<br/>+ Titik Awal + Kecepatan"] --> P["Rencanakan Jalur<br/>(maju/belok + preview)"]
         P --> B[Format Paket RF24]
+        T["Tampil Heading MPU<br/>(telemetri balik)"]
     end
 
-    subgraph Radio["📡 RF24 NRF24L01+<br/>250 KBPS / Ch 0x76"]
+    subgraph Radio["📡 RF24 NRF24L01+<br/>250 KBPS / Ch 0x76<br/>2 arah (gantian)"]
         B -- "P=10;L=4;MODE=AUTO;<br/>SPD=0.5;LW=1;DIR=R" --> C
     end
 
@@ -25,6 +26,8 @@ flowchart LR
         D --> F["2x ESC Brushless 30A<br/>Kiri & Kanan - Differential"]
         D --> G["Pola Zigzag<br/>Belok Berselang-seling"]
     end
+
+    E -. "R=..;P=..;Y=..<br/>(balik, addr 00002)" .-> T
 ```
 
 ---
@@ -47,8 +50,10 @@ flowchart TD
     SENDBTN -- Belum --> INPUT
     SENDBTN -- Ya --> ENCODE["Encode paket:<br/>P=..;L=..;MODE=AUTO;<br/>SPD=..;LW=..;DIR=.."]
     ENCODE --> SEND[Kirim via RF24<br/>retry 5x]
-    SEND --> HB["Heartbeat PING tiap 0.5s<br/>selama misi berjalan"]
-    HB --> STOPCHK{Klik STOP?}
+    SEND --> HB["Thread comms tiap 0.5s:<br/>kirim PING (mode TX)"]
+    HB --> POLL["Dengar ~70ms (mode RX):<br/>tangkap telemetri MPU"]
+    POLL --> SHOW[Update heading MPU di GUI]
+    SHOW --> STOPCHK{Klik STOP?}
     STOPCHK -- Tidak --> HB
     STOPCHK -- Ya --> SENDSTOP[Kirim STOP<br/>hentikan heartbeat]
     SENDSTOP --> INPUT
@@ -72,7 +77,7 @@ flowchart TD
     UPDATEMPU --> LISTEN
 
     RF24 -- Ya --> PKT{Jenis<br/>paket?}
-    PKT -- PING --> HBEAT[Segarkan heartbeat<br/>lalu abaikan]
+    PKT -- PING --> HBEAT["Segarkan heartbeat<br/>+ balas telemetri MPU<br/>(stopListening → write NOACK → listen)"]
     HBEAT --> LISTEN
     PKT -- STOP --> STOPM[stopBoat<br/>matikan motor]
     STOPM --> LISTEN
@@ -164,6 +169,29 @@ flowchart TD
     DIR --> OUT1[Preview kanvas<br/>+ daftar langkah]
     DIR --> OUT2["Encode paket ke robot:<br/>SPD, LW, DIR"]
 ```
+
+---
+
+## 7. Telemetri 2 Arah (Half-Duplex "Gantian")
+
+Komunikasi 2 arah di atas modul NRF24 yang **sama** — bergantian bicara seperti radio HT. Robot mengirim data MPU balik ke Pi tanpa mengganggu heartbeat.
+
+```mermaid
+sequenceDiagram
+    participant Pi as Raspberry Pi GUI
+    participant Robot as ESP32 Robot
+    Note over Pi,Robot: Half-duplex, gantian bicara (seperti radio HT)
+    Pi->>Robot: PING (Pi mode TX)
+    Robot-->>Pi: auto-ACK hardware = robot terjangkau
+    Note over Pi: pindah ke RX ~70 ms
+    Note over Robot: giliran kirim, stopListening (~1 ms)
+    Robot->>Pi: R=.. P=.. Y=.. (telemetri MPU, NOACK)
+    Note over Robot: startListening lagi
+    Note over Pi: tampilkan heading, balik ke mode TX
+    Note over Pi,Robot: ulangi tiap 0.5 s (thread comms)
+```
+
+> Window TX robot hanya ~1 ms + throttle (maks 10 Hz), jadi heartbeat & kendali tidak terganggu. Telemetri dikirim **NOACK** (fire-and-forget) supaya robot tak nge-block walau Pi belum sempat mendengar. Alamat balik `00002` terpisah dari alamat perintah `00001`.
 
 ---
 

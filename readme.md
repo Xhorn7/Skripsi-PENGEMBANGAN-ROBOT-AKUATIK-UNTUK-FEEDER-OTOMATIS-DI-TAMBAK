@@ -15,7 +15,7 @@ Dua sub-sistem yang terhubung nirkabel lewat modul radio **NRF24L01+**:
 | **Transmitter** | Raspberry Pi 4 / PC | Aplikasi GUI: input misi, perencanaan jalur, kirim perintah, telemetri & logging |
 | **Robot (Receiver)** | ESP32 | Terima perintah, jalankan pola zigzag, heading-hold MPU6050, kendali 2 motor brushless |
 
-Komunikasi **satu arah** (Transmitter → Robot) + auto-ACK NRF. Detail alur ada di [flowchart.md](flowchart.md) dan folder [Flowchart Images/](Flowchart%20Images/).
+Komunikasi **dua arah half-duplex** ("gantian" seperti radio HT): Pi mengirim perintah/PING, robot membalas telemetri MPU di sela-selanya. Detail alur ada di [flowchart.md](flowchart.md) dan folder [Flowchart Images/](Flowchart%20Images/).
 
 ---
 
@@ -27,7 +27,8 @@ Komunikasi **satu arah** (Transmitter → Robot) + auto-ACK NRF. Detail alur ada
 - **Heading-hold proporsional:** robot berjalan lurus dengan koreksi arah dari MPU6050 (Kp × error).
 - **Zigzag menyapu penuh:** arah U-turn **berselang-seling** sehingga sapuan menutupi seluruh lebar tambak.
 - **Failsafe heartbeat:** robot berhenti otomatis bila sinyal transmitter hilang > 3 detik.
-- **Telemetri (estimasi) & sensor MPU nyata:** fase misi, RPM/kecepatan estimasi, dan roll/pitch/yaw real via serial USB.
+- **Telemetri MPU 2 arah (radio):** robot mengirim balik roll/pitch/yaw lewat NRF (half-duplex "gantian") — heading terbaca real **saat robot berlayar bebas**, bukan cuma saat tertambat kabel USB.
+- **Telemetri estimasi:** fase misi, RPM/kecepatan estimasi dari PWM (robot belum punya sensor RPM).
 - **Logging:** semua aktivitas tercatat, ekspor CSV/TXT.
 - **Mode simulasi:** GUI jalan tanpa hardware NRF (di PC) untuk pengujian/demo.
 
@@ -59,8 +60,10 @@ Paket dari Transmitter ke Robot (NRF: alamat `00001`, channel `0x76`, 250 KBPS, 
 | Paket | Makna |
 |---|---|
 | `P=<m>;L=<m>;MODE=AUTO;SPD=<m/s>;LW=<m>;DIR=<R\|L>` | Misi zigzag: dimensi + kecepatan + lebar lintasan + arah belok pertama. `SPD/LW/DIR` opsional (robot pakai default bila tak ada). |
-| `PING` | Heartbeat tiap 0,5 s (menjaga failsafe) |
+| `PING` | Heartbeat tiap 0,5 s (menjaga failsafe + memicu giliran telemetri) |
 | `STOP` | Batalkan misi / matikan motor |
+
+Jalur balik **Robot → Pi** (alamat `00002`, half-duplex "gantian"): robot mengirim telemetri MPU `R=<roll>;P=<pitch>;Y=<yaw>` sesudah menerima PING; Pi mendengarkan sebentar untuk menangkapnya. Window TX robot ~1 ms + throttle sehingga heartbeat tidak terganggu.
 
 ---
 
@@ -120,9 +123,9 @@ Buka `Master Code/Robot/New/Finalnew/Finalnew.ino` di Arduino IDE (atau build vi
 
 ## Status & Iterasi Berikutnya
 
-Sudah berjalan: kendali zigzag otomatis di air, heading-hold, perencanaan jalur + preview, keypad layar, protokol diperluas, failsafe. Rencana lanjutan:
+Sudah berjalan: kendali zigzag otomatis di air, heading-hold, perencanaan jalur + preview, keypad layar, protokol diperluas, failsafe, dan **telemetri MPU 2 arah lewat radio** (half-duplex "gantian"). Rencana lanjutan:
 
-- Telemetri **dua arah** (ACK payload) untuk status & throttle nyata dari robot.
-- **Sensor RPM/encoder** menggantikan estimasi.
+- **Sensor RPM/encoder** menggantikan estimasi kecepatan/RPM.
 - Belok berbasis **sudut yaw MPU** (bukan durasi timer).
 - **Path waypoint bebas** (klik banyak titik), bukan hanya sapuan persegi.
+- Perluas telemetri balik (status komponen, throttle nyata, baterai).

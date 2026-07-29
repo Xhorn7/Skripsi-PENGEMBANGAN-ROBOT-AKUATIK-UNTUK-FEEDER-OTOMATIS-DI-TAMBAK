@@ -397,10 +397,10 @@ class FeederGUI(ctk.CTk):
         f.grid(row=2, column=0, sticky="ew", pady=(0, 8))
         f.grid_columnconfigure((0, 1, 2), weight=1)
 
-        ctk.CTkLabel(f, text="SENSOR MPU6050  (data REAL via Serial USB)",
+        ctk.CTkLabel(f, text="SENSOR MPU6050  (data REAL)",
                      font=("", 15, "bold")).grid(row=0, column=0, columnspan=3,
                                                  pady=(8, 2))
-        ctk.CTkLabel(f, text="dari ESP32 (mpu.ino) — jalur terpisah dari NRF",
+        ctk.CTkLabel(f, text="via NRF (radio, saat misi) — atau Serial USB (uji bench)",
                      font=("", 10), text_color=COLOR_IDLE).grid(
             row=1, column=0, columnspan=3, pady=(0, 4))
 
@@ -746,10 +746,11 @@ class FeederGUI(ctk.CTk):
     # ==================================================================
 
     def _heartbeat_loop(self):
-        """Kirim PING selama misi aktif (meniru receiverArduino.py)."""
+        """Kirim PING + poll telemetri MPU (gantian TX/RX) selama misi aktif."""
         while True:
             if self.mission_running and self.heartbeat_enabled:
-                self.link.send(b"PING")
+                # 1 siklus half-duplex: PING (jaga failsafe) lalu dengar telemetri
+                self.link.ping_and_poll_telemetry()
             time.sleep(HEARTBEAT_INTERVAL_S)
 
     def _ui_tick(self):
@@ -761,7 +762,10 @@ class FeederGUI(ctk.CTk):
 
     def _refresh_mpu(self):
         r: MPUReading = self.mpu.latest
+        tel = self.link.get_telemetry()   # (roll,pitch,yaw) via NRF, atau None
+
         if self.mpu.connected:
+            # Sumber SERIAL USB (uji bench, robot tertambat)
             self.mpu_tiles["roll"].configure(text=f"{r.angle_x:.1f}°",
                                              text_color=COLOR_OK)
             self.mpu_tiles["pitch"].configure(text=f"{r.angle_y:.1f}°",
@@ -771,15 +775,31 @@ class FeederGUI(ctk.CTk):
             src = "SIMULASI" if self.mpu.simulation else self.mpu.port
             self.lbl_mpu_gyro.configure(
                 text=f"Gyro X={r.gyro_x:.1f} Y={r.gyro_y:.1f} Z={r.gyro_z:.1f}"
-                     f"   ·   sumber: {src}",
+                     f"   ·   sumber: SERIAL {src}",
                 text_color=COLOR_OK)
 
-            # rekam ke log @1 Hz saat diaktifkan
             if self.mpu_record and (time.monotonic() - self._last_mpu_log) >= 1.0:
                 self._last_mpu_log = time.monotonic()
                 self.logger.log("MPU-DATA",
                                 f"Roll={r.angle_x:.1f} Pitch={r.angle_y:.1f} "
                                 f"Yaw={r.angle_z:.1f} | GyroZ={r.gyro_z:.1f}")
+
+        elif tel is not None:
+            # Sumber RADIO NRF (telemetri 2 arah, robot berlayar bebas)
+            roll, pitch, yaw = tel
+            self.mpu_tiles["roll"].configure(text=f"{roll:.1f}°", text_color=COLOR_OK)
+            self.mpu_tiles["pitch"].configure(text=f"{pitch:.1f}°", text_color=COLOR_OK)
+            self.mpu_tiles["yaw"].configure(text=f"{yaw:.1f}°", text_color=COLOR_OK)
+            self.lbl_mpu_gyro.configure(
+                text=f"Roll={roll:.1f} Pitch={pitch:.1f} Yaw={yaw:.1f}"
+                     f"   ·   sumber: NRF (radio, real)",
+                text_color=COLOR_OK)
+
+            if self.mpu_record and (time.monotonic() - self._last_mpu_log) >= 1.0:
+                self._last_mpu_log = time.monotonic()
+                self.logger.log("MPU-RADIO",
+                                f"Roll={roll:.1f} Pitch={pitch:.1f} Yaw={yaw:.1f}")
+
         else:
             for t in self.mpu_tiles.values():
                 t.configure(text_color=COLOR_IDLE)
