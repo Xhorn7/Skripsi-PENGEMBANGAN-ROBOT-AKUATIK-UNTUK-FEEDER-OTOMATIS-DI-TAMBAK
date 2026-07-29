@@ -17,7 +17,7 @@ Firmware ini adalah **otak robot**. Tugasnya menerjemahkan satu perintah tingkat
 
 **Sifat penting yang membentuk seluruh desain kode:**
 
-- **Komunikasi satu arah.** Transmitter hanya mengirim; robot hanya menerima (ditambah *auto-ACK* bawaan NRF di lapisan radio). Robot **tidak** mengirim balik telemetri.
+- **Komunikasi dua arah half-duplex ("gantian").** Transmitter mengirim perintah/PING; robot menerima, lalu **bergiliran** mengirim balik telemetri MPU (roll/pitch/yaw) di sela-selanya — seperti radio HT. Detailnya di bagian 6 & 11.
 - **Gerak berbasis waktu (open-loop), bukan posisi.** Robot tidak punya GPS/encoder. "Maju sekian meter" diwujudkan sebagai "maju selama sekian milidetik", dihitung dari kecepatan asumsi. Karena itu beberapa konstanta **wajib dikalibrasi di air**.
 - **Belok differential thrust.** Tidak ada kemudi; belok dilakukan dengan mematikan satu motor dan menjalankan motor lain, sehingga robot **berbelok melingkar lebar**, bukan berputar di tempat.
 
@@ -57,7 +57,7 @@ Firmware ini adalah **otak robot**. Tugasnya menerjemahkan satu perintah tingkat
 
 ## 3. Konstanta Kalibrasi
 
-Blok `#define` (baris 35–44) adalah tempat tuning utama perilaku robot; nilainya harus disamakan dengan asumsi di sisi transmitter dan **diukur ulang di air**. Sejak protokol diperluas, `ROBOT_SPEED_MPS` dan `LANE_WIDTH_M` berperan sebagai **default** — bisa ditimpa per-misi oleh field `SPD=`/`LW=` dari GUI (lihat bagian 11).
+Blok `#define` (baris 36–46) adalah tempat tuning utama perilaku robot; nilainya harus disamakan dengan asumsi di sisi transmitter dan **diukur ulang di air**. Sejak protokol diperluas, `ROBOT_SPEED_MPS` dan `LANE_WIDTH_M` berperan sebagai **default** — bisa ditimpa per-misi oleh field `SPD=`/`LW=` dari GUI (lihat bagian 11).
 
 | Konstanta | Nilai default | Arti & dampak |
 |---|---|---|
@@ -74,7 +74,7 @@ Blok `#define` (baris 35–44) adalah tempat tuning utama perilaku robot; nilain
 
 ## 4. Variabel Status Global
 
-Baris 48–60 menyimpan keadaan robot antar-iterasi `loop()`:
+Baris 50–63 menyimpan keadaan robot antar-iterasi `loop()`:
 
 | Variabel | Tipe | Peran |
 |---|---|---|
@@ -86,6 +86,9 @@ Baris 48–60 menyimpan keadaan robot antar-iterasi `loop()`:
 | `robotSpeedMps` | `float` | Kecepatan jelajah dari paket `SPD=` (default `ROBOT_SPEED_MPS`) |
 | `laneWidthM` | `float` | Lebar lintasan dari paket `LW=` (default `LANE_WIDTH_M`) |
 | `firstTurnRight` | `bool` | Arah U-turn pertama dari paket `DIR=` (`R`→`true`) |
+| `lastTelemetryMs` | `unsigned long` | Waktu terakhir kirim telemetri MPU (throttle, lihat bagian 6) |
+
+Selain itu, `const byte telemetryAddress[6] = "00002"` (dekat `address`) adalah **alamat balik** untuk telemetri Robot→Pi, terpisah dari alamat perintah `"00001"`.
 
 ---
 
@@ -93,16 +96,16 @@ Baris 48–60 menyimpan keadaan robot antar-iterasi `loop()`:
 
 Empat fungsi ini adalah lapisan terendah yang langsung menulis sinyal PWM ke ESC.
 
-- **`armESC()`** (baris 64–71) — mengirim 1000 µs ke kedua ESC lalu `delay(5000)`. **Wajib** dijalankan sekali saat *boot*; tanpa arming, ESC menolak semua perintah throttle.
-- **`stopBoat()`** (baris 73–77) — kedua motor ke 1000 µs (berhenti). Dipakai di semua jalur *failsafe* dan akhir misi.
-- **`forwardBoat(speedPWM)`** (baris 79–83) — kedua motor ke nilai PWM sama (maju lurus tanpa koreksi). *Catatan: pada praktiknya gerak lurus memakai `driveHeadingMS()` yang berkoreksi, bukan fungsi ini.*
-- **`turnLeft()` / `turnRight()`** (baris 86–97) — *differential thrust*: satu motor `1000` (stop), satu motor `CRUISE_PWM` (maju). Menghasilkan belok **melingkar lebar** ke arah motor yang berhenti. Dipakai oleh `turn90()` (bagian 8).
+- **`armESC()`** (baris 67–74) — mengirim 1000 µs ke kedua ESC lalu `delay(5000)`. **Wajib** dijalankan sekali saat *boot*; tanpa arming, ESC menolak semua perintah throttle.
+- **`stopBoat()`** (baris 76–80) — kedua motor ke 1000 µs (berhenti). Dipakai di semua jalur *failsafe* dan akhir misi.
+- **`forwardBoat(speedPWM)`** (baris 82–87) — kedua motor ke nilai PWM sama (maju lurus tanpa koreksi). *Catatan: pada praktiknya gerak lurus memakai `driveHeadingMS()` yang berkoreksi, bukan fungsi ini.*
+- **`turnLeft()` / `turnRight()`** (baris 89–100) — *differential thrust*: satu motor `1000` (stop), satu motor `CRUISE_PWM` (maju). Menghasilkan belok **melingkar lebar** ke arah motor yang berhenti. Dipakai oleh `turn90()` (bagian 8).
 
 ---
 
 ## 6. Failsafe & Heartbeat — `signalAlive()`
 
-Baris 104–118. Ini adalah **jaring pengaman** yang dipanggil terus-menerus di dalam setiap gerakan.
+Baris 139–161. Ini adalah **jaring pengaman** yang dipanggil terus-menerus di dalam setiap gerakan.
 
 ```
 bool signalAlive() {
@@ -111,6 +114,7 @@ bool signalAlive() {
     lastSignalMs = millis();       // segarkan detak jantung
     if (strncmp(buf, "STOP", 4)==0)
       stopRequested = true;        // STOP di tengah misi -> tandai abort
+    maybeSendTelemetry();          // GILIRAN KIRIM: balas telemetri MPU
   }
   return (millis() - lastSignalMs) < SIGNAL_TIMEOUT_MS;
 }
@@ -118,17 +122,39 @@ bool signalAlive() {
 
 **Konsep heartbeat:** transmitter mengirim paket `PING` tiap 0,5 detik selama misi berjalan. Setiap paket apa pun menyegarkan `lastSignalMs`. Bila selisih waktu melebihi `SIGNAL_TIMEOUT_MS` (3 detik), fungsi mengembalikan `false` → pemanggil menghentikan robot. Ini melindungi robot agar tidak "kabur" saat radio putus.
 
+### 6.1 Telemetri MPU balik — `sendTelemetry()` / `maybeSendTelemetry()`
+
+Baris 110–133. Tepat setelah menerima paket, robot **bergiliran** mengirim data MPU ke Pi — mekanisme *half-duplex* seperti radio HT:
+
+```
+void sendTelemetry() {
+  snprintf(tel, 32, "R=%.1f;P=%.1f;Y=%.1f", roll, pitch, yaw);
+  radio.stopListening();                    // giliran kirim
+  radio.openWritingPipe(telemetryAddress);  // alamat balik "00002"
+  radio.write(tel, strlen(tel)+1, true);    // multicast=true -> NOACK, ~1 ms
+  radio.startListening();                   // langsung dengar perintah lagi
+}
+```
+
+`maybeSendTelemetry()` membungkusnya dengan *throttle* `TELEMETRY_INTERVAL_MS` (maks ~10 Hz). Kenapa heartbeat **tidak** terganggu:
+
+- Window TX hanya **~1 ms** lalu langsung `startListening()` lagi — robot tidak berdiam di mode kirim.
+- Ditulis **NOACK** (`multicast=true`, memerlukan `enableDynamicAck()` di `setup`) → tanpa retry, tidak *blocking* walau Pi belum sempat mendengar.
+- STOP dikirim Pi berulang (5×) selama ~250 ms, sedangkan robot "budek" hanya ~1 ms tiap ~100 ms → mustahil kelewat semua. Failsafe 3 detik tetap utuh.
+
+Pi menangkap paket ini di alamat `"00002"` sesudah tiap PING. Hook yang sama juga dipasang pada cabang `PING` di `loop()` (bagian 10.1).
+
 ---
 
 ## 7. Maju Lurus dengan Heading-Hold — `driveHeadingMS()`
 
-Baris 125–176. **Inti gerak "maju x meter".** Robot maju selama `durationMs` sambil menjaga arah (yaw) tetap di `targetYaw` memakai kontrol **proporsional**.
+Baris 163–214. **Inti gerak "maju x meter".** Robot maju selama `durationMs` sambil menjaga arah (yaw) tetap di `targetYaw` memakai kontrol **proporsional**.
 
 Cara kerja per iterasi (tiap ~50 ms → 20 Hz):
 
 1. `mpu.update()` — baca orientasi terbaru.
 2. **Cek failsafe:** bila `!signalAlive()` atau `stopRequested` → `stopBoat()` dan `return false` (abort).
-3. Hitung error arah `err = targetYaw - yaw`, lalu **dinormalisasi** ke rentang −180°…+180° (baris 150–151) agar koreksi selalu mengambil arah putar terpendek.
+3. Hitung error arah `err = targetYaw - yaw`, lalu **dinormalisasi** ke rentang −180°…+180° (baris 188–189) agar koreksi selalu mengambil arah putar terpendek.
 4. Bila `|err| > HEADING_DEADBAND`, hitung koreksi `KP_HEADING * err`, dibatasi `±MAX_CORRECTION`.
 5. Terapkan **differential**: motor kiri `CRUISE_PWM + koreksi`, motor kanan `CRUISE_PWM - koreksi`, masing-masing di-*clamp* ke 1000–2000 µs.
 6. Cetak status (Yaw/Target/Error/Koreksi) ke Serial untuk *debugging*.
@@ -141,7 +167,7 @@ Selesai durasi → `stopBoat()` dan `return true`. Nilai kembalian ini penting: 
 
 ## 8. Belok 90° — `turn90(toRight)`
 
-Baris 185–209. Menjalankan `turnRight()` **atau** `turnLeft()` sesuai parameter `toRight`, lalu menahannya selama `TURN_90_MS`, sambil tetap mengecek *failsafe* dan `stopRequested` tiap 20 ms. Selesai → `stopBoat()`. Fungsi ini menggantikan `turnRight90()` lama agar U-turn bisa berbelok ke kiri maupun kanan (dibutuhkan pola zigzag berselang-seling di bagian 10). Di bawahnya, helper `tokenEnd()` (baris 211–215) membantu memisah field paket pada karakter `;`.
+Baris 223–247. Menjalankan `turnRight()` **atau** `turnLeft()` sesuai parameter `toRight`, lalu menahannya selama `TURN_90_MS`, sambil tetap mengecek *failsafe* dan `stopRequested` tiap 20 ms. Selesai → `stopBoat()`. Fungsi ini menggantikan `turnRight90()` lama agar U-turn bisa berbelok ke kiri maupun kanan (dibutuhkan pola zigzag berselang-seling di bagian 10). Di bawahnya, helper `tokenEnd()` (baris 249–253) membantu memisah field paket pada karakter `;`.
 
 > **Keterbatasan penting:** belokan ini **berbasis waktu**, bukan berbasis sudut giroskop. Firmware tidak memverifikasi bahwa robot benar-benar berputar 90°. Karena radius putar ESC unidirectional bervariasi (arus, muatan, arus air), `TURN_90_MS` **harus dikalibrasi** dan tetap rawan galat akumulatif. Perbaikan: gunakan target yaw ±90° dengan *feedback* MPU (bagian 13).
 
@@ -149,7 +175,7 @@ Baris 185–209. Menjalankan `turnRight()` **atau** `turnLeft()` sesuai paramete
 
 ## 9. Inisialisasi — `setup()`
 
-Baris 219–265. **Urutan inisialisasi di sini sengaja dibuat NRF terlebih dahulu** — ini keputusan desain penting (komentar "SOLUSI 5A", baris 223–228):
+Baris 257–306. **Urutan inisialisasi di sini sengaja dibuat NRF terlebih dahulu** — ini keputusan desain penting (komentar "SOLUSI 5A", baris 261–266). Di sini juga dipanggil `radio.enableDynamicAck()` agar telemetri bisa dikirim NOACK (bagian 6.1):
 
 1. **`Serial.begin(115200)`**.
 2. **Radio NRF di-init paling awal.** Alasannya: `mpu.calcGyroOffsets()` bisa *hang* selamanya bila I2C bermasalah, dan `armESC()` menahan `delay(5000)`. Bila NRF di-init belakangan, `startListening()` baru aktif ~8 detik setelah *boot* (atau tidak sama sekali) → robot tidak meng-ACK → transmitter melaporkan **FAILED**. Dengan NRF didahulukan, radio langsung *listening*.
@@ -163,17 +189,17 @@ Baris 219–265. **Urutan inisialisasi di sini sengaja dibuat NRF terlebih dahul
 
 ## 10. Loop Utama & Algoritma Zigzag — `loop()`
 
-Baris 269–419. Terdiri dari dua bagian: **penerimaan paket** dan **eksekusi misi**.
+Baris 308–459. Terdiri dari dua bagian: **penerimaan paket** dan **eksekusi misi**.
 
-### 10.1 Penerimaan & klasifikasi paket (baris 273–351)
+### 10.1 Penerimaan & klasifikasi paket (baris 312–351)
 
 Setiap paket yang masuk menyegarkan `lastSignalMs`, lalu diklasifikasikan:
 
-- **`PING`** → heartbeat murni. Cukup segarkan waktu, lalu `return` — **jangan** dianggap misi baru, agar misi berjalan tidak ter-*trigger* ulang.
+- **`PING`** → heartbeat murni. Segarkan waktu, **balas telemetri MPU** (`maybeSendTelemetry()`, bagian 6.1), lalu `return` — **jangan** dianggap misi baru, agar misi berjalan tidak ter-*trigger* ulang.
 - **`STOP`** (saat idle) → `stopBoat()`, reset `stopRequested = false`, lalu `return`.
 - **Selain itu** → dianggap paket misi. Firmware mem-parse `P=`, `L=`, `MODE=` (wajib) serta `SPD=`, `LW=`, `DIR=` (opsional) dengan `indexOf`/`substring`+`tokenEnd`. Bila format valid → isi `panjangTambak`, `lebarTambak`, `modeRobot`, `robotSpeedMps`, `laneWidthM`, `firstTurnRight`, set `missionReceived = true`. Bila tidak → cetak pesan `ERROR: Format tidak valid`. Parameter opsional yang tak ada di-reset ke default konstanta, sehingga paket lama (`P=..;L=..;MODE=AUTO`) tetap jalan.
 
-### 10.2 Eksekusi misi AUTO (baris 355–418)
+### 10.2 Eksekusi misi AUTO (baris 395–458)
 
 Ketika `missionReceived && modeRobot == "AUTO"` (durasi memakai `robotSpeedMps` & `laneWidthM` — nilai dari paket `SPD`/`LW`, atau default konstanta):
 
@@ -216,7 +242,7 @@ genap sehingga arah tempuh selang-seling (pola *boustrophedon* / zigzag).
 
 Setiap gerakan menyisipkan cek *failsafe*; bila salah satu mengembalikan `false`, `aborted = true` dan misi dihentikan dengan pesan `MISI DIBATALKAN`. Bila tuntas → `MISI SELESAI`. Di kedua kasus `stopBoat()` dipanggil.
 
-> `lastSignalMs` dan `stopRequested` **di-reset di awal misi** (baris 369–370) agar sisa `STOP` lama atau jeda sinyal sebelum misi tidak langsung membatalkan misi baru.
+> `lastSignalMs` dan `stopRequested` **di-reset di awal misi** (baris 409–410) agar sisa `STOP` lama atau jeda sinyal sebelum misi tidak langsung membatalkan misi baru.
 
 ---
 
@@ -239,6 +265,12 @@ Field opsional yang di-parse firmware (bila tidak ada → pakai konstanta defaul
 | `LW=` | `LW=1` | Mengganti `laneWidthM` → mempengaruhi jumlah lane & durasi geser |
 | `DIR=` | `DIR=R` | Arah U-turn **pertama** (`R`=kanan / `L`=kiri); U-turn berikutnya berselang-seling |
 
+**Jalur balik (telemetri 2 arah, bagian 6.1).** Robot mengirim ke alamat terpisah `"00002"` sesudah menerima paket:
+
+| Paket | Arah | Makna |
+|---|---|---|
+| `R=<roll>;P=<pitch>;Y=<yaw>` | Robot → Transmitter | Telemetri MPU (NOACK), dikirim di alamat `"00002"` secara half-duplex "gantian" |
+
 ---
 
 ## 12. Panduan Kalibrasi (Ringkas)
@@ -254,5 +286,5 @@ Field opsional yang di-parse firmware (bila tidak ada → pakai konstanta defaul
 
 - **Belok berbasis waktu, bukan sudut.** Ganti `turn90()` timed dengan koreksi menuju target yaw ±90° berbasis MPU agar belokan presisi tanpa kalibrasi rawan.
 - **Gerak *open-loop*.** Tanpa GPS/encoder, galat jarak & sudut terakumulasi sepanjang misi panjang. Tambahkan sensor posisi/encoder untuk *closed-loop*.
-- **Komunikasi satu arah.** Tambahkan *ACK payload* NRF agar robot mengirim balik status (yaw, fase, baterai) ke GUI transmitter secara nyata.
+- **Telemetri 2 arah — sudah ada (MPU).** Robot kini mengirim balik roll/pitch/yaw via radio (bagian 6.1). Iterasi berikutnya: perluas isi telemetri (status komponen, throttle nyata, baterai).
 - **Path masih pola sapuan (zigzag).** Sudah membaik: dimensi, kecepatan, lebar lintasan, dan titik awal kini dapat diatur dari aplikasi dan diterjemahkan menjadi daftar segmen "maju x / belok y°" eksplisit, dengan arah belok berselang-seling yang benar. Iterasi berikutnya: menerima *list* waypoint bebas (bukan hanya sapuan persegi) dari aplikasi untuk path arbitrer.

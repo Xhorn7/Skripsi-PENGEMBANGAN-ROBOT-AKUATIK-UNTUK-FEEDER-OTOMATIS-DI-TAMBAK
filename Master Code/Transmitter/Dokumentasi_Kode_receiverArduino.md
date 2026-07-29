@@ -135,13 +135,15 @@ Paket yang dikirim `receiverArduino.py` harus dipahami oleh `Finalnew.ino`:
 |---|---|---|
 | **`receiverArduino.py`** | `run_gui`, `run_cli`, `main` | Entry point & pemilihan mode |
 | **`feeder_gui.py`** | kelas `FeederGUI` | Presentasi: input, tombol, gauge, LED, panel MPU, tampilan log |
-| **`feeder_core.py`** | `RadioLink` | Abstraksi NRF24 (`pyrf24`) + *auto-fallback* `MockRadio` (simulasi) |
+| **`feeder_core.py`** | `RadioLink` | Abstraksi NRF24 (`pyrf24`) + `MockRadio` (simulasi) + `ping_and_poll_telemetry()` (2 arah "gantian") |
 | | `plan_coverage()` / `CoveragePlan` | Terjemahkan tambak persegi + titik awal + lebar lintasan → daftar segmen "maju x / belok y°" (path zigzag) + `encode_mission()` |
 | | `MissionEstimator` | Estimasi fase/PWM/RPM/kecepatan sepanjang timeline zigzag |
 | | `ActivityLogger` | Pencatatan aktivitas berstempel waktu + ekspor CSV/TXT |
 | | `MPUSerialReader` | Baca data MPU6050 (roll/pitch/yaw) via serial USB |
 
-> **Perbedaan penting dengan CLI:** mode GUI kini menyediakan **keypad numerik** (layar sentuh tanpa keyboard), input **titik awal**, **lebar lintasan**, dan **kecepatan**, plus **preview jalur** (kanvas + daftar langkah maju/belok). GUI mengirim paket **diperluas** `P=..;L=..;MODE=AUTO;SPD=..;LW=..;DIR=..`, sedangkan mode CLI di berkas ini masih mengirim bentuk dasar `P=..;L=..;MODE=AUTO` (tetap valid — robot memakai default untuk field yang tak ada). GUI juga menampilkan **telemetri estimasi** dan **data MPU6050 nyata** via serial USB; CLI hanya mengirim perintah tanpa telemetri.
+> **Perbedaan penting dengan CLI:** mode GUI kini menyediakan **keypad numerik** (layar sentuh tanpa keyboard), input **titik awal**, **lebar lintasan**, dan **kecepatan**, plus **preview jalur** (kanvas + daftar langkah maju/belok). GUI mengirim paket **diperluas** `P=..;L=..;MODE=AUTO;SPD=..;LW=..;DIR=..`, sedangkan mode CLI di berkas ini masih mengirim bentuk dasar `P=..;L=..;MODE=AUTO` (tetap valid — robot memakai default untuk field yang tak ada). GUI juga menampilkan **telemetri estimasi** dan **data MPU6050 nyata** — kini lewat **radio NRF 2 arah** (heading terbaca saat robot berlayar bebas), atau serial USB saat uji bench; CLI hanya mengirim perintah tanpa telemetri.
+
+> **Telemetri 2 arah (half-duplex "gantian").** Di mode GUI, thread heartbeat memakai `RadioLink.ping_and_poll_telemetry()`: kirim PING (mode TX) lalu dengarkan ~70 ms (mode RX) untuk menangkap paket MPU `R=..;P=..;Y=..` yang dikirim robot di alamat `"00002"`. Radionya satu (half-duplex), jadi kirim/terima **bergantian** dan akses radio dilindungi lock — persis konsep radio HT.
 
 ---
 

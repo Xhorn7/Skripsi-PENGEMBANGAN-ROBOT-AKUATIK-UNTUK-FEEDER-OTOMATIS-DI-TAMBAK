@@ -64,6 +64,14 @@ BATTERY_V         = 11.1    # tegangan baterai (3S LiPo)
 
 HEARTBEAT_INTERVAL_S = 0.5  # interval PING (harus < SIGNAL_TIMEOUT_MS)
 
+# --- Telemetri balik (komunikasi 2 arah, half-duplex "gantian") ---
+# Robot mengirim MPU ke alamat ini setelah menerima PING; Pi mendengarkan
+# sebentar sesudah tiap PING untuk menangkapnya. Format ASCII: "R=..;P=..;Y=.."
+TELEMETRY_ADDR   = b"00002"   # alamat balik Robot -> Pi (beda dari perintah "00001")
+TELEMETRY_POLL_S = 0.07       # lama Pi mendengarkan telemetri tiap siklus (s)
+TELEMETRY_STALE_S = 2.0       # telemetri dianggap basi bila > ini (s)
+_TEL_RE = re.compile(r"R=(-?[\d.]+);P=(-?[\d.]+);Y=(-?[\d.]+)")
+
 
 # =====================================================================
 # Util konversi PWM -> throttle/RPM/speed
@@ -117,6 +125,11 @@ class RadioLink:
         self.last_ack_ms: float = 0.0   # millis() terakhir robot meng-ACK
         self.tx_enabled = True          # gate: boleh mengirim atau tidak
 
+        # telemetri balik (roll, pitch, yaw) hasil poll terakhir
+        self.telemetry_addr = TELEMETRY_ADDR
+        self._telemetry: tuple[float, float, float] | None = None
+        self._telemetry_ts: float = 0.0
+
     # ---- lifecycle -------------------------------------------------
 
     def begin(self) -> bool:
@@ -129,9 +142,11 @@ class RadioLink:
                 raise RuntimeError("radio.begin() gagal — cek wiring NRF")
 
             radio.open_tx_pipe(self.address)
+            radio.open_rx_pipe(1, self.telemetry_addr)  # pipe telemetri balik (Robot->Pi)
             radio.setPALevel(RF24_PA_LOW)
             radio.setDataRate(RF24_250KBPS)
             radio.setChannel(0x76)
+            radio.stopListening()   # default mode TX (kirim perintah/PING)
 
             self._radio = radio
             self.simulation = False
@@ -170,6 +185,61 @@ class RadioLink:
             time.sleep(gap_s)
         return ok
 
+    # ---- telemetri balik (komunikasi 2 arah, gantian TX/RX) --------
+
+    def ping_and_poll_telemetry(self, poll_s: float = TELEMETRY_POLL_S) -> bool:
+        """
+        Satu siklus 'gantian' half-duplex:
+          1) kirim PING (mode TX)  -> jaga heartbeat + jadi pemicu giliran robot,
+          2) pindah ke RX sebentar -> tangkap 1 paket telemetri MPU dari robot,
+          3) balik ke mode TX.
+        Return True bila robot meng-ACK PING (robot terjangkau).
+        Aman untuk hardware maupun MockRadio; kegagalan RX tidak fatal.
+        """
+        if not self.tx_enabled or self._radio is None:
+            return False
+        raw = None
+        with self._lock:
+            ok = bool(self._radio.write(b"PING"))
+            if ok:
+                self.last_ack_ms = time.monotonic() * 1000.0
+            try:
+                self._radio.startListening()
+                deadline = time.monotonic() + poll_s
+                while time.monotonic() < deadline:
+                    if self._radio.available():
+                        raw = self._radio.read(32)
+                        break
+                    time.sleep(0.002)
+            except Exception:
+                raw = None          # API RX beda / belum siap -> lewati saja
+            finally:
+                try:
+                    self._radio.stopListening()
+                except Exception:
+                    pass
+        if raw:
+            self._parse_telemetry(raw)
+        return ok
+
+    def _parse_telemetry(self, raw: bytes) -> None:
+        try:
+            text = bytes(raw).split(b"\x00", 1)[0].decode("ascii", "ignore")
+        except Exception:
+            return
+        m = _TEL_RE.search(text)
+        if m:
+            self._telemetry = (float(m.group(1)), float(m.group(2)), float(m.group(3)))
+            self._telemetry_ts = time.monotonic()
+
+    def get_telemetry(self) -> tuple[float, float, float] | None:
+        """(roll, pitch, yaw) terbaru bila belum basi, else None."""
+        if self._telemetry is None:
+            return None
+        if (time.monotonic() - self._telemetry_ts) > TELEMETRY_STALE_S:
+            return None
+        return self._telemetry
+
     # ---- status ----------------------------------------------------
 
     def robot_reachable(self, timeout_ms: float = SIGNAL_TIMEOUT_MS) -> bool:
@@ -186,14 +256,37 @@ class RadioLink:
 
 
 class MockRadio:
-    """Radio tiruan untuk mode SIMULASI. write() mengembalikan status ACK."""
+    """
+    Radio tiruan untuk mode SIMULASI. write() mengembalikan status ACK, dan
+    saat 'listening' menyediakan telemetri MPU buatan (yaw berayun) supaya
+    fitur telemetri 2 arah tetap bisa didemokan tanpa hardware.
+    """
 
     def __init__(self):
         self.robot_online = True
+        self._listening = False
+        self._t0 = time.monotonic()
 
-    def write(self, payload: bytes) -> bool:
+    def write(self, payload: bytes, *args, **kwargs) -> bool:
         # Robot 'online' -> selalu ACK. Bisa dimatikan untuk demo kegagalan.
         return bool(self.robot_online)
+
+    # --- API RX tiruan (dipakai ping_and_poll_telemetry) ---
+    def startListening(self) -> None:
+        self._listening = True
+
+    def stopListening(self) -> None:
+        self._listening = False
+
+    def available(self) -> bool:
+        return self._listening and self.robot_online
+
+    def read(self, length: int = 32) -> bytes:
+        t = time.monotonic() - self._t0
+        roll = 2.0 * math.sin(t * 1.1)
+        pitch = 1.5 * math.cos(t * 0.9)
+        yaw = 40.0 * math.sin(t * 0.5)          # heading berayun -40..40
+        return f"R={roll:.1f};P={pitch:.1f};Y={yaw:.1f}".encode()
 
 
 # =====================================================================
@@ -683,6 +776,13 @@ if __name__ == "__main__":
           f"module_present={link.module_present}")
     ok = link.send_retry(b"P=10;L=4;MODE=AUTO")
     print(f"Kirim misi -> ACK={ok}  robot_reachable={link.robot_reachable()}")
+
+    # Telemetri 2 arah (gantian TX/RX) — di simulasi MockRadio membalas MPU
+    link.ping_and_poll_telemetry()
+    tel = link.get_telemetry()
+    print(f"Poll telemetri -> {tel}")
+    assert tel is not None and len(tel) == 3, "telemetri tidak ter-parse"
+    print("  [OK] komunikasi 2 arah (telemetri MPU) tertangkap")
 
     # PATH PLANNER — terjemahkan tambak -> segmen maju/belok
     print("\n== Path planner (tambak 10x4, lane 1m, mulai Kiri-Bawah) ==")

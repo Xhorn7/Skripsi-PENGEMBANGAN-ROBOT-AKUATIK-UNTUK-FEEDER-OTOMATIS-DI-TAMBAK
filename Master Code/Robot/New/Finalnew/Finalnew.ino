@@ -11,7 +11,8 @@
 // JANGAN pakai 9/10 = pin flash internal WROOM (bikin crash/boot-loop).
 RF24 radio(4, 5);
 
-const byte address[6] = "00001";
+const byte address[6] = "00001";          // Pi -> Robot (perintah/PING)
+const byte telemetryAddress[6] = "00002"; // Robot -> Pi (telemetri MPU, 2 arah)
 
 char text[64];
 
@@ -42,6 +43,7 @@ Servo escRight;
 #define MAX_CORRECTION    60     // batas koreksi PWM (us) agar tidak ekstrem
 #define HEADING_DEADBAND  2.0f   // toleransi error heading (derajat)
 #define SIGNAL_TIMEOUT_MS 3000   // failsafe: stop bila tak ada sinyal selama ini (ms)
+#define TELEMETRY_INTERVAL_MS 100 // interval maksimum kirim telemetri MPU balik (ms)
 
 // ================= DATA =================
 
@@ -52,6 +54,7 @@ bool missionReceived = false;
 
 unsigned long lastSignalMs = 0;  // heartbeat terakhir dari transmitter
 bool stopRequested = false;      // di-set true saat menerima paket "STOP"
+unsigned long lastTelemetryMs = 0;  // waktu terakhir kirim telemetri MPU (throttle)
 
 // Parameter misi OPSIONAL dari paket (default = konstanta kalibrasi di atas).
 // Dikirim GUI transmitter lewat "SPD=", "LW=", "DIR="; kalau tidak ada, pakai default.
@@ -97,6 +100,38 @@ void turnRight()
 }
 
 // =========================================
+// TELEMETRI 2 ARAH (half-duplex "gantian" — seperti radio HT).
+// Robot berhenti listening SEBENTAR (~1 ms), kirim data MPU ke Pi tanpa
+// menunggu ACK (fire-and-forget), lalu langsung listening lagi. Window TX
+// yang sangat pendek + throttle menjaga heartbeat/kendali tidak terganggu.
+// Dipanggil TEPAT setelah menerima paket dari Pi (giliran kita bicara).
+// =========================================
+
+void sendTelemetry()
+{
+  char tel[32];
+  memset(tel, 0, sizeof(tel));
+  // Format ASCII: "R=<roll>;P=<pitch>;Y=<yaw>" (ESP32 mendukung %f di snprintf)
+  snprintf(tel, sizeof(tel), "R=%.1f;P=%.1f;Y=%.1f",
+           mpu.getAngleX(), mpu.getAngleY(), mpu.getAngleZ());
+
+  radio.stopListening();                    // GILIRAN KIRIM
+  radio.openWritingPipe(telemetryAddress);
+  radio.write(tel, strlen(tel) + 1, true);  // multicast=true -> NOACK, cepat & non-blocking
+  radio.startListening();                   // langsung dengar perintah lagi
+}
+
+// Kirim telemetri bila sudah lewat interval throttle (batasi laju TX).
+void maybeSendTelemetry()
+{
+  if (millis() - lastTelemetryMs >= TELEMETRY_INTERVAL_MS)
+  {
+    lastTelemetryMs = millis();
+    sendTelemetry();
+  }
+}
+
+// =========================================
 // Cek sinyal transmitter sebagai heartbeat (failsafe).
 // Return true bila koneksi masih hidup, false bila timeout.
 // =========================================
@@ -113,6 +148,9 @@ bool signalAlive()
     // Perintah STOP di tengah misi -> tandai untuk abort.
     if (strncmp(buf, "STOP", 4) == 0)
       stopRequested = true;
+
+    // Baru saja menerima -> giliran robot mengirim telemetri MPU balik.
+    maybeSendTelemetry();
   }
   return (millis() - lastSignalMs) < SIGNAL_TIMEOUT_MS;
 }
@@ -239,6 +277,7 @@ void setup()
   radio.setDataRate(RF24_250KBPS);
   radio.setChannel(0x76);
   radio.openReadingPipe(1, address);  // pipe 1 (pipe 0 reserved untuk auto-ACK)
+  radio.enableDynamicAck();           // izinkan write NOACK utk telemetri (fire-and-forget)
   radio.startListening();
 
   Serial.println("Radio Ready (listening)");
@@ -279,10 +318,11 @@ void loop()
     String data = String(text);
 
     // Paket PING = heartbeat murni (jaga failsafe), BUKAN misi baru.
-    // Cukup update lastSignalMs di atas, lalu abaikan — supaya misi yang
-    // sedang jalan tidak ter-trigger ulang oleh heartbeat.
+    // Cukup update lastSignalMs di atas, balas telemetri MPU (giliran kirim),
+    // lalu abaikan — supaya misi yang sedang jalan tidak ter-trigger ulang.
     if (data.startsWith("PING"))
     {
+      maybeSendTelemetry();
       return;
     }
 
