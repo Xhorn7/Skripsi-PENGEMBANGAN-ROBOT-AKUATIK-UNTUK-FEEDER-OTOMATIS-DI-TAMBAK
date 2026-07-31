@@ -7,12 +7,12 @@ Import("env")
 import os
 
 SKETCH_DIR_OF_ENV = {
-    "esp32dev": ("Master Code", "New", "Finalnew"),
-    "movetest": ("Master Code", "New", "MoveTest"),
-    "esctest":  ("Test Part", "Motor"),
+    "esp32dev": ("Master Code", "Robot", "New", "Finalnew"),
+    "movetest": ("Test Part", "MoveTest"),
+    "esctest":  ("Test Part", "EscTest"),
 }
 
-parts = SKETCH_DIR_OF_ENV.get(env["PIOENV"], ("Master Code", "New", "Finalnew"))
+parts = SKETCH_DIR_OF_ENV.get(env["PIOENV"], ("Master Code", "Robot", "New", "Finalnew"))
 src = os.path.join(env["PROJECT_DIR"], *parts)
 env.Replace(PROJECT_SRC_DIR=src)
 print("[select_sketch] env=%s  ->  PROJECT_SRC_DIR=%s" % (env["PIOENV"], src))
