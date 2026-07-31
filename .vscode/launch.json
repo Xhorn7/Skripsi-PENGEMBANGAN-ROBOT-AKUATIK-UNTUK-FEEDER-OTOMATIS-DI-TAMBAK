@@ -31,9 +31,9 @@
             "type": "platformio-debug",
             "request": "launch",
             "name": "PIO Debug",
-            "executable": "D:/Samuel/Kuliah/Semester/Skripsi/Skripsi-PENGEMBANGAN-ROBOT-AKUATIK-UNTUK-FEEDER-OTOMATIS-DI-TAMBAK/.pio/build/esp32dev/firmware.elf",
+            "executable": "C:/Users/samue/Skripsi-PENGEMBANGAN-ROBOT-AKUATIK-UNTUK-FEEDER-OTOMATIS-DI-TAMBAK/.pio/build/esp32dev/firmware.elf",
             "projectEnvName": "esp32dev",
-            "toolchainBinDir": "C:/Users/USER/.platformio/packages/toolchain-xtensa-esp32/bin",
+            "toolchainBinDir": "C:/Users/samue/.platformio/packages/toolchain-xtensa-esp32/bin",
             "internalConsoleOptions": "openOnSessionStart",
             "preLaunchTask": {
                 "type": "PlatformIO",
@@ -44,18 +44,18 @@
             "type": "platformio-debug",
             "request": "launch",
             "name": "PIO Debug (skip Pre-Debug)",
-            "executable": "D:/Samuel/Kuliah/Semester/Skripsi/Skripsi-PENGEMBANGAN-ROBOT-AKUATIK-UNTUK-FEEDER-OTOMATIS-DI-TAMBAK/.pio/build/esp32dev/firmware.elf",
+            "executable": "C:/Users/samue/Skripsi-PENGEMBANGAN-ROBOT-AKUATIK-UNTUK-FEEDER-OTOMATIS-DI-TAMBAK/.pio/build/esp32dev/firmware.elf",
             "projectEnvName": "esp32dev",
-            "toolchainBinDir": "C:/Users/USER/.platformio/packages/toolchain-xtensa-esp32/bin",
+            "toolchainBinDir": "C:/Users/samue/.platformio/packages/toolchain-xtensa-esp32/bin",
             "internalConsoleOptions": "openOnSessionStart"
         },
         {
             "type": "platformio-debug",
             "request": "launch",
             "name": "PIO Debug (without uploading)",
-            "executable": "D:/Samuel/Kuliah/Semester/Skripsi/Skripsi-PENGEMBANGAN-ROBOT-AKUATIK-UNTUK-FEEDER-OTOMATIS-DI-TAMBAK/.pio/build/esp32dev/firmware.elf",
+            "executable": "C:/Users/samue/Skripsi-PENGEMBANGAN-ROBOT-AKUATIK-UNTUK-FEEDER-OTOMATIS-DI-TAMBAK/.pio/build/esp32dev/firmware.elf",
             "projectEnvName": "esp32dev",
-            "toolchainBinDir": "C:/Users/USER/.platformio/packages/toolchain-xtensa-esp32/bin",
+            "toolchainBinDir": "C:/Users/samue/.platformio/packages/toolchain-xtensa-esp32/bin",
             "internalConsoleOptions": "openOnSessionStart",
             "loadMode": "manual"
         }
