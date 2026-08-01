@@ -1,7 +1,7 @@
 # Dokumentasi Troubleshooting NRF24 — Transmitter "selalu FAILED"
 
 Dokumen ini merangkum kenapa pengiriman dari transmitter
-([receiverArduino.py](receiverArduino.py — di folder `Master Code/Transmitter/`))
+(`receiverArduino.py` — di folder `Master Code/Transmitter/`)
 **selalu balik FAILED**, dan cara-cara mendiagnosa/memperbaikinya.
 
 ---
@@ -163,9 +163,29 @@ Monitor (115200) dan pastikan muncul `Receiver Ready`.
 ## 8. Langkah verifikasi
 
 1. Upload `Finalnew.ino` ke ESP32, nyalakan robot.
-2. Jalankan `receiverArduino.py` di transmitter.
-3. Masukkan misi, mis. `P=10; L=5; MODE=AUTO`.
-4. **Berhasil** kalau transmitter mencetak **SUCCESS** (opsi B: plus status `RDY`).
-5. Kalau masih **FAILED**:
-   - Pastikan (via Serial / buzzer / ACK) receiver benar-benar mencapai kondisi *listening*.
+2. Jalankan `python receiverArduino.py --cli` di Pengendali Utama.
+3. Kirim satu perintah pendek, mis. `FW 20` (maju 20 cm).
+4. **Berhasil** kalau berurutan muncul:
+   - `[KIRIM] [FW:20] percobaan 1 — ACK` → paket diterima lapisan radio,
+   - `[GERAK] ON FW diterima` → robot benar-benar memproses perintah,
+   - `[SELESAI] FIN FW:20` → gerakan tuntas dan dilaporkan balik.
+5. Kalau **ACK ada tapi `ON` tidak pernah datang** (status `KIRIM ULANG`):
+   - Jalur balik bermasalah — cek `radio.openWritingPipe(telemetryAddress)` dan
+     `enableDynamicAck()` di firmware; alamat balik harus `00002`.
+   - Cek Serial robot: kalau muncul `ERROR: paket tidak dikenali`, formatnya salah.
+6. Kalau **tidak ada ACK sama sekali** (`TANPA ACK`):
+   - Pastikan (via Serial) receiver benar-benar mencapai kondisi *listening*.
    - Cek power NRF (kapasitor) dan coba data rate `1MBPS` di kedua sisi.
+
+> Perintah `FW 20` sengaja dipakai untuk uji: durasinya singkat, jaraknya kecil,
+> tapi tetap melewati **seluruh** siklus protokol (kirim → `ON` → `FIN`).
+
+---
+
+## 9. Catatan versi
+
+Dokumen ini ditulis saat protokol masih berupa paket misi tunggal
+(`P=..;L=..;MODE=AUTO`). Analisis penyebab dan solusi wiring/daya di bagian 1–7
+**tetap berlaku** karena bersifat lapisan radio, bukan lapisan protokol. Yang
+berubah hanyalah bentuk paket ujinya — lihat bagian 8 di atas, atau
+`Dokumentasi_Kode_Finalnew.pdf` untuk protokol lengkapnya.

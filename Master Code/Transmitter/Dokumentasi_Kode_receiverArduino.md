@@ -1,6 +1,6 @@
 # Dokumentasi Kode — Entry Point Transmitter `receiverArduino.py`
 
-Dokumen ini menjelaskan berkas **`receiverArduino.py`**, yaitu **satu-satunya titik masuk (entry point)** sisi *transmitter* (Raspberry Pi / PC) untuk mengendalikan robot feeder akuatik. Menjalankan file ini akan menjalankan seluruh sistem kendali: GUI, telemetri, dan logging.
+Dokumen ini menjelaskan berkas **`receiverArduino.py`**, yaitu **satu-satunya titik masuk (entry point)** sisi *Pengendali Utama* (Raspberry Pi / PC) untuk mengendalikan robot feeder akuatik. Menjalankan file ini akan menjalankan seluruh sistem kendali: GUI, komunikasi radio, dan logging.
 
 > Dokumentasi arsitektur GUI yang lebih mendalam (analisis kebutuhan, perancangan, pengujian) ada pada **`Dokumentasi_GUI_Feeder_SDLC.pdf`** di folder yang sama. Dokumen ini fokus pada **kode `receiverArduino.py`** dan modul yang dipanggilnya.
 
@@ -8,52 +8,53 @@ Dokumen ini menjelaskan berkas **`receiverArduino.py`**, yaitu **satu-satunya ti
 
 ## 1. Gambaran Umum
 
-`receiverArduino.py` berperan sebagai **peluncur (launcher)** dengan dua mode operasi:
+`receiverArduino.py` berperan sebagai **peluncur (launcher)** dengan tiga mode operasi:
 
 | Mode | Cara jalan | Kegunaan |
 |---|---|---|
-| **GUI** (default) | `python receiverArduino.py` | Panel kontrol grafis (CustomTkinter) — dipakai operator di lapangan |
-| **CLI** (lama) | `python receiverArduino.py --cli` | Mode teks sederhana — untuk uji cepat / tanpa layar sentuh |
+| **GUI layar penuh** (default) | `python receiverArduino.py` | Panel kontrol di layar sentuh 7 inci — dipakai operator di lapangan |
+| **GUI jendela** | `python receiverArduino.py --windowed` | Jendela 800×480 untuk pengembangan & uji di PC |
+| **CLI** | `python receiverArduino.py --cli` | Mode teks — uji cepat perintah tanpa layar sentuh |
 
 Filosofi desainnya: **logika inti tidak ditulis di sini**. Berkas ini hanya memilih mode lalu mendelegasikan pekerjaan ke modul lain:
 
 - **`feeder_gui.py`** — antarmuka grafis (kelas `FeederGUI`).
-- **`feeder_core.py`** — mesin di baliknya: `RadioLink`, `MissionEstimator`, `ActivityLogger`, `MPUSerialReader`.
+- **`feeder_core.py`** — mesin di baliknya: `RobotCommand`, `RadioLink`, `CommandRunner`, path planner, `ActivityLogger`, `MPUSerialReader`.
 
-Dengan begitu, `receiverArduino.py` tetap ringkas dan mudah dibaca sebagai peta seluruh sistem.
+Dengan begitu `receiverArduino.py` tetap ringkas dan mudah dibaca sebagai peta seluruh sistem.
 
 ---
 
 ## 2. Struktur Berkas
 
-Hanya ada tiga fungsi + satu *guard*:
+Tiga fungsi + satu *guard*:
 
-| Fungsi | Baris | Peran |
-|---|---|---|
-| `run_gui()` | 25–39 | Membuka panel kontrol grafis |
-| `run_cli()` | 46–109 | Menjalankan antarmuka teks lama |
-| `main()` | 114–118 | Memilih mode dari argumen baris perintah |
-| `if __name__ == "__main__"` | 121–122 | Titik eksekusi saat file dijalankan langsung |
+| Fungsi | Peran |
+|---|---|
+| `run_gui(fullscreen)` | Membuka panel kontrol grafis |
+| `run_cli()` | Menjalankan antarmuka teks |
+| `main()` | Memilih mode dari argumen baris perintah |
+| `if __name__ == "__main__"` | Titik eksekusi saat file dijalankan langsung |
 
 ---
 
 ## 3. Pemilihan Mode — `main()`
 
-Baris 114–118. Sangat sederhana: bila argumen `--cli` atau `-c` ada di `sys.argv`, jalankan mode teks; jika tidak, buka GUI.
+Sangat sederhana. Bila argumen `--cli` atau `-c` ada, jalankan mode teks; jika tidak, buka GUI — layar penuh kecuali diberi `--windowed`:
 
 ```
 def main():
     if "--cli" in sys.argv or "-c" in sys.argv:
         run_cli()
     else:
-        run_gui()
+        run_gui(fullscreen="--windowed" not in sys.argv)
 ```
 
 ---
 
 ## 4. Mode GUI — `run_gui()`
 
-Baris 25–39. Mengimpor `FeederGUI` dari `feeder_gui.py`, lalu memanggil `FeederGUI().mainloop()` untuk membuka jendela.
+Mengimpor `FeederGUI` dari `feeder_gui.py`, lalu memanggil `FeederGUI(fullscreen=...).mainloop()`.
 
 Bagian penting adalah **penanganan `ImportError`**: bila pustaka GUI (mis. `customtkinter`) belum terpasang, program tidak *crash* dengan *traceback* membingungkan, melainkan mencetak petunjuk pemasangan yang jelas lalu keluar rapi:
 
@@ -64,11 +65,13 @@ except ImportError as e:
     print("Gagal memuat GUI:", e)
     print("    pip install customtkinter          (wajib utk GUI)")
     print("    pip install pyrf24 pyserial         (utk NRF & MPU nyata di Pi)")
-    print("    python receiverArduino.py --cli     (mode teks lama)")
+    print("    python receiverArduino.py --cli     (mode teks)")
     sys.exit(1)
 ```
 
 > **Catatan pemasangan (penting di Windows/PC dengan banyak Python):** pesan `customtkinter belum terpasang` muncul bila paket terpasang di interpreter Python yang **berbeda** dari yang menjalankan skrip. Pastikan memasang ke interpreter yang sama, mis. `& "C:\path\ke\python.exe" -m pip install customtkinter pyserial`. Di PC (tanpa NRF), `pyrf24` boleh dilewati — GUI otomatis masuk **mode simulasi**.
+
+**Tentang layar penuh.** GUI mengambil resolusi layar perangkat dan berjalan tanpa bilah judul, dirancang untuk layar sentuh 7 inci (800 × 480 px). Tombol **Escape** atau **F11** mengembalikannya ke mode jendela — berguna saat pengembangan di PC. Untuk langsung memulai dalam jendela, pakai `--windowed`.
 
 Mode GUI otomatis memakai **NRF asli** bila dijalankan di Raspberry Pi (pustaka `pyrf24` tersedia), dan **mode simulasi** bila tidak — sehingga panel tetap bisa didemokan di PC tanpa perangkat keras.
 
@@ -76,74 +79,115 @@ Mode GUI otomatis memakai **NRF asli** bila dijalankan di Raspberry Pi (pustaka 
 
 ## 5. Mode CLI — `run_cli()`
 
-Baris 46–109. Berbeda dengan GUI, **seluruh logika mode teks ada di dalam fungsi ini**, jadi paling banyak dijelaskan di sini. Alurnya:
+Berbeda dengan versi sebelumnya yang menulis ulang seluruh logika radio, mode teks sekarang **memakai komponen yang sama persis dengan GUI**: `RadioLink` untuk radio dan `CommandRunner` untuk protokol Request-Response. Jadi tidak ada lagi dua implementasi protokol yang bisa saling menyimpang.
 
-### 5.1 Inisialisasi radio (baris 47–63)
-
-```
-radio = RF24(24, 0)          # CE=GPIO24, CSN=CE0 (pin Raspberry Pi)
-radio.begin()
-radio.open_tx_pipe(b"00001") # alamat = "00001"
-radio.setPALevel(RF24_PA_LOW)
-radio.setDataRate(RF24_250KBPS)
-radio.setChannel(0x76)
-```
-
-> Parameter radio (**alamat `00001`, channel `0x76`, data rate `250KBPS`, PA `LOW`**) **harus identik** dengan firmware robot `Finalnew.ino`; jika berbeda, kedua modul tidak akan terhubung. Perhatikan pin CE/CSN di Raspberry (`24, 0`) berbeda dari ESP32 (`4, 5`) karena beda papan.
-
-### 5.2 Heartbeat otomatis (baris 65–79)
-
-Sebuah *thread* latar (`daemon`) mengirim paket `PING` tiap **0,5 detik** selama sebuah misi berjalan (`state["mission_running"] == True`). Ini menjaga *failsafe* robot tetap "hidup" (robot berhenti bila tak ada sinyal > 3 detik).
+### 5.1 Inisialisasi
 
 ```
-def heartbeat_loop():
-    while True:
-        if state["mission_running"]:
-            radio_send(b"PING")
-        time.sleep(HEARTBEAT_INTERVAL_S)   # 0.5 s
-threading.Thread(target=heartbeat_loop, daemon=True).start()
+link = RadioLink()
+link.begin()                       # auto-fallback ke simulasi bila NRF tak ada
+logger = ActivityLogger(on_new=lambda ev: print(f"  [{ev.category}] {ev.message}"))
+runner = CommandRunner(link, logger=logger)
 ```
 
-Akses ke `radio.write()` dilindungi `threading.Lock` (fungsi `radio_send`) agar *thread* input utama dan *thread* heartbeat tidak menulis ke radio bersamaan.
+`ActivityLogger` diberi *callback* yang langsung mencetak tiap kejadian, sehingga operator melihat siklus protokol berjalan secara langsung.
 
-### 5.3 Loop perintah operator (baris 81–108)
+> Parameter radio (**alamat `00001`, channel `0x76`, data rate `250KBPS`, PA `LOW`**) diatur di dalam `RadioLink` dan **harus identik** dengan firmware robot `Finalnew.ino`; jika berbeda, kedua modul tidak akan terhubung. Perhatikan pin CE/CSN di Raspberry (`24, 0`) berbeda dari ESP32 (`4, 5`) karena beda papan.
 
-- Operator mengetik **Panjang Tambak**. Bila mengetik `STOP`, program menghentikan heartbeat (`mission_running=False`) dan mengirim paket `STOP` sebanyak 5 kali (perulangan untuk keandalan).
-- Selain itu, operator mengetik **Lebar Tambak**, lalu program menyusun payload `P=<panjang>;L=<lebar>;MODE=AUTO` dan mengirimnya 5 kali. Bila salah satu pengiriman berhasil → tampilkan `SUCCESS` dan set `mission_running=True` (heartbeat mulai).
+### 5.2 Perintah yang tersedia
 
-**Mengapa dikirim 5 kali?** NRF24 kadang gagal pada pengiriman pertama; mengulang beberapa kali meningkatkan peluang paket diterima tanpa perlu protokol *retry* rumit.
+| Ketikan | Aksi |
+|---|---|
+| `FW <10-200>` | Maju sekian sentimeter |
+| `CW <1-180>` | Putar kanan sekian derajat |
+| `CCW <1-180>` | Putar kiri sekian derajat |
+| `MISI <p> <l>` | Susun sapuan zigzag tambak p × l meter, lalu jalankan seluruh antreannya |
+| `STOP` | Berhenti darurat |
+| `KELUAR` | Kirim STOP lalu keluar |
+
+### 5.3 Alur eksekusi
+
+Perintah tunggal divalidasi dulu terhadap tabel rentang, baru dijalankan:
+
+```
+cmd = RobotCommand(verb, int(parts[1]))
+valid, msg = cmd.validate()
+if not valid:
+    print(msg)                     # mis. "CW hanya menerima 1-180 derajat (diberi 999)"
+    continue
+runner.run([cmd], label="MANUAL")
+```
+
+Untuk `MISI`, tambak diterjemahkan menjadi antrean perintah lebih dulu:
+
+```
+plan  = plan_coverage(panjang, lebar)
+queue = plan_command_queue(plan)       # -> [FW:200, FW:200, ..., CW:90, ...]
+runner.run(queue, label="MISI")
+```
+
+Contoh keluaran nyata:
+
+```
+perintah> FW 150
+  [KIRIM] [FW:150] percobaan 1 - ACK
+1 perintah dijalankan
+  [GERAK] ON FW diterima - Maju 150 cm
+  [SELESAI] FIN FW:150 - Maju 150 cm tuntas
+  [MANUAL] SELESAI - 1 perintah tereksekusi
+  -> SELESAI
+```
 
 ---
 
 ## 6. Konsistensi Protokol dengan Firmware
 
-Paket yang dikirim `receiverArduino.py` harus dipahami oleh `Finalnew.ino`:
+Paket yang dikirim harus dipahami `Finalnew.ino`. Protokolnya mengikuti *Dokumen Spesifikasi Teknis* bab Skema Komunikasi:
 
-| Paket dikirim | Oleh | Ditangani firmware |
+| Paket | Arah | Ditangani firmware |
 |---|---|---|
-| `P=<m>;L=<m>;MODE=AUTO` | input operator | Parsing dimensi → jalankan misi zigzag |
-| `PING` | thread heartbeat (0,5 s) | Segarkan *heartbeat*, cegah *failsafe* |
-| `STOP` | perintah `STOP` operator | Batalkan misi / matikan motor |
+| `FW:<10-200>` | Pi → Robot | Maju lurus sekian sentimeter |
+| `CW:<1-180>` | Pi → Robot | Putar searah jarum jam (ke kanan) |
+| `CCW:<1-180>` | Pi → Robot | Putar berlawanan jarum jam (ke kiri) |
+| `STOP:0` | Pi → Robot | Hentikan motor — berhenti darurat |
+| `PING` | Pi → Robot | Segarkan *heartbeat*, cegah *failsafe* |
+| `ON <Moves>` | Robot → Pi | Perintah sedang dijalankan (tiap 1 detik) |
+| `FIN <Moves>:<Dist>` | Robot → Pi | Perintah selesai — izin lanjut ke perintah berikutnya |
+| `R=..;P=..;Y=..` | Robot → Pi | Telemetri sudut MPU |
+
+**Pola Request-Response:**
+
+```
+Pi  ->  FW:200
+Pi  <-  ON FW              (< 1 detik, kalau tidak -> kirim ulang, maks 5x)
+Pi  <-  ON FW              (berulang tiap 1 detik selama bergerak)
+Pi  <-  FIN FW:200         (selesai -> lanjut perintah berikutnya)
+```
+
+Bila `ON` tidak datang dalam 1 detik, `CommandRunner` menganggap perintah gagal dan mengirimnya ulang. Setelah 5 percobaan tanpa jawaban, antrean dihentikan dan `STOP:0` dikirim sebagai pengaman.
 
 ---
 
 ## 7. Peta Modul (Arsitektur)
 
-`receiverArduino.py` adalah lapisan tertipis; kekuatan sistem ada di modul yang dipanggilnya (khususnya via mode GUI):
+`receiverArduino.py` adalah lapisan tertipis; kekuatan sistem ada di modul yang dipanggilnya:
 
 | Berkas | Isi utama | Tanggung jawab |
 |---|---|---|
 | **`receiverArduino.py`** | `run_gui`, `run_cli`, `main` | Entry point & pemilihan mode |
-| **`feeder_gui.py`** | kelas `FeederGUI` | Presentasi: input, tombol, gauge, LED, panel MPU, tampilan log |
-| **`feeder_core.py`** | `RadioLink` | Abstraksi NRF24 (`pyrf24`) + `MockRadio` (simulasi) + `ping_and_poll_telemetry()` (2 arah "gantian") |
-| | `plan_coverage()` / `CoveragePlan` | Terjemahkan tambak persegi + titik awal + lebar lintasan → daftar segmen "maju x / belok y°" (path zigzag) + `encode_mission()` |
-| | `MissionEstimator` | Estimasi fase/PWM/RPM/kecepatan sepanjang timeline zigzag |
+| **`feeder_gui.py`** | kelas `FeederGUI` | Presentasi: enam halaman bergaya ATM, papan angka, preview jalur, gauge, LED, tampilan log |
+| **`feeder_core.py`** | `RobotCommand` | Satu paket `[Moves]:[Dist]` + validasi rentang sesuai tabel perintah |
+| | `RadioLink` | Abstraksi NRF24 (`pyrf24`) + `MockRadio` (simulasi); merutekan `ON`/`FIN`/telemetri |
+| | `plan_coverage()` / `plan_command_queue()` | Tambak persegi + titik awal + lebar lintasan → segmen "maju/belok" → antrean perintah FW/CW/CCW |
+| | `CommandRunner` | Pelaksana Request-Response: kirim, tunggu `ON` (kirim ulang bila lewat 1 detik), tunggu `FIN`, lanjut |
 | | `ActivityLogger` | Pencatatan aktivitas berstempel waktu + ekspor CSV/TXT |
 | | `MPUSerialReader` | Baca data MPU6050 (roll/pitch/yaw) via serial USB |
 
-> **Perbedaan penting dengan CLI:** mode GUI kini menyediakan **keypad numerik** (layar sentuh tanpa keyboard), input **titik awal**, **lebar lintasan**, dan **kecepatan**, plus **preview jalur** (kanvas + daftar langkah maju/belok). GUI mengirim paket **diperluas** `P=..;L=..;MODE=AUTO;SPD=..;LW=..;DIR=..`, sedangkan mode CLI di berkas ini masih mengirim bentuk dasar `P=..;L=..;MODE=AUTO` (tetap valid — robot memakai default untuk field yang tak ada). GUI juga menampilkan **telemetri estimasi** dan **data MPU6050 nyata** — kini lewat **radio NRF 2 arah** (heading terbaca saat robot berlayar bebas), atau serial USB saat uji bench; CLI hanya mengirim perintah tanpa telemetri.
+> **Perbedaan GUI vs CLI.** Keduanya memakai protokol dan komponen inti yang sama. GUI menambahkan: papan angka layar sentuh, input titik awal / lebar lintasan / kecepatan, preview jalur pada kanvas, gauge telemetri, panel sensor MPU, dan ekspor log. CLI hanya mengirim perintah dan mencetak kejadian.
 
-> **Telemetri 2 arah (half-duplex "gantian").** Di mode GUI, thread heartbeat memakai `RadioLink.ping_and_poll_telemetry()`: kirim PING (mode TX) lalu dengarkan ~70 ms (mode RX) untuk menangkap paket MPU `R=..;P=..;Y=..` yang dikirim robot di alamat `"00002"`. Radionya satu (half-duplex), jadi kirim/terima **bergantian** dan akses radio dilindungi lock — persis konsep radio HT.
+> **Komunikasi 2 arah half-duplex ("gantian").** Satu modul NRF tidak bisa kirim dan terima bersamaan, jadi kedua sisi bergantian seperti radio HT. `RadioLink.pump()` membuka jendela dengar singkat lalu kembali ke mode TX; semua paket yang masuk dirutekan menurut awalannya — `ON`, `FIN`, atau telemetri MPU. Akses radio dilindungi *lock* agar thread heartbeat dan thread runner tidak menulis bersamaan.
+
+> **Catatan thread (penting).** `CommandRunner` berjalan di thread latar, sedangkan Tkinter hanya boleh disentuh dari thread utama. Karena itu runner **tidak** diberi *callback* ke GUI — tampilan justru **menarik** (polling) status dan log tiap 120 ms. Memanggil `after()` dari thread latar pernah membuat thread runner terblokir menunggu Tcl sehingga sinyal `ON` tidak pernah terbaca.
 
 ---
 
@@ -151,8 +195,9 @@ Paket yang dikirim `receiverArduino.py` harus dipahami oleh `Finalnew.ino`:
 
 ```
 cd "Master Code/Transmitter"
-python receiverArduino.py          # buka GUI (default)
-python receiverArduino.py --cli    # mode teks lama
+python receiverArduino.py               # GUI layar penuh (layar sentuh 7")
+python receiverArduino.py --windowed    # GUI jendela 800x480 (uji di PC)
+python receiverArduino.py --cli         # mode teks
 ```
 
 **Dependensi** (lihat `requirements.txt`):
@@ -169,4 +214,4 @@ python receiverArduino.py --cli    # mode teks lama
 
 ## 9. Ringkasan
 
-`receiverArduino.py` sengaja dijaga **minimal dan jelas**: satu entry point, dua mode, penanganan error yang ramah, dan pendelegasian bersih ke `feeder_gui.py`/`feeder_core.py`. Struktur ini membuat sistem mudah dipakai (satu perintah untuk semua) sekaligus mudah dikembangkan — penambahan fitur cukup dilakukan di modul core/GUI tanpa mengubah titik masuk.
+`receiverArduino.py` sengaja dijaga **minimal dan jelas**: satu entry point, tiga mode, penanganan error yang ramah, dan pendelegasian bersih ke `feeder_gui.py`/`feeder_core.py`. Sejak mode CLI ikut memakai `RadioLink` dan `CommandRunner`, tidak ada lagi duplikasi implementasi protokol — perbaikan pada protokol otomatis berlaku di kedua mode.
