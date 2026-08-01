@@ -4,15 +4,17 @@ receiverArduino.py — ENTRY POINT tunggal sisi Transmitter (Raspberry Pi/PC)
 
 Jalankan SATU file ini untuk menjalankan semuanya (GUI + telemetri + logging):
 
-    python receiverArduino.py            # buka GUI panel kontrol (default)
-    python receiverArduino.py --cli      # mode teks lama (tanpa GUI)
+    python receiverArduino.py               # GUI layar penuh (layar sentuh 7")
+    python receiverArduino.py --windowed    # GUI jendela 800x480 (uji di PC)
+    python receiverArduino.py --cli         # mode teks (tanpa GUI)
 
 GUI otomatis MODE SIMULASI bila NRF/pyrf24 tidak tersedia (mis. di PC),
 dan memakai NRF asli bila dijalankan di Raspberry Pi.
 
 Logika inti ada di:
-    - feeder_gui.py    (antarmuka CustomTkinter)
-    - feeder_core.py   (RadioLink, MissionEstimator, ActivityLogger, MPUSerialReader)
+    - feeder_gui.py    (antarmuka CustomTkinter, gaya ATM, mengikuti layar)
+    - feeder_core.py   (RobotCommand, RadioLink, CommandRunner, ActivityLogger,
+                        path planner, MPUSerialReader)
 """
 
 import sys
@@ -22,7 +24,7 @@ import sys
 # MODE GUI (default) — buka panel kontrol
 # =====================================================================
 
-def run_gui():
+def run_gui(fullscreen: bool = True):
     try:
         from feeder_gui import FeederGUI
     except ImportError as e:
@@ -31,82 +33,105 @@ def run_gui():
         print(" Pasang dependensi dulu:")
         print("     pip install customtkinter          (wajib utk GUI)")
         print("     pip install pyrf24 pyserial         (utk NRF & MPU nyata di Pi)")
-        print(" Atau jalankan mode teks lama:")
+        print(" Atau jalankan mode teks:")
         print("     python receiverArduino.py --cli")
         print("=" * 58)
         sys.exit(1)
 
-    FeederGUI().mainloop()
+    FeederGUI(fullscreen=fullscreen).mainloop()
 
 
 # =====================================================================
-# MODE CLI (lama) — antarmuka teks, sama seperti versi awal
+# MODE CLI — antarmuka teks memakai protokol Sinyal Kendali
+#
+# Mengikuti "Dokumen Spesifikasi Teknis", perintah dikirim satu per satu
+# dalam format "[Moves]:[Dist]" dan robot membalas "ON [Moves]" lalu
+# "FIN [Moves]:[Dist]". Seluruh siklus itu ditangani CommandRunner.
 # =====================================================================
 
 def run_cli():
     import time
-    import threading
-    from pyrf24 import RF24, RF24_PA_LOW, RF24_250KBPS # type: ignore
 
-    radio = RF24(24, 0)
+    from feeder_core import (
+        ActivityLogger, CommandRunner, MOVE_RANGE, RadioLink, RobotCommand,
+        plan_command_queue, plan_coverage, queue_duration_s,
+    )
 
-    if not radio.begin():
-        print("NRF gagal detect")
-        return
+    link = RadioLink()
+    link.begin()
+    logger = ActivityLogger(on_new=lambda ev: print(f"  [{ev.category}] {ev.message}"))
+    runner = CommandRunner(link, logger=logger)
 
-    address = b"00001"
-    radio.open_tx_pipe(address)
-    radio.setPALevel(RF24_PA_LOW)
-    radio.setDataRate(RF24_250KBPS)
-    radio.setChannel(0x76)
+    print("=== PENGENDALI UTAMA — ROBOT AKUATIK (mode teks) ===")
+    print("Mode:", "SIMULASI (tanpa NRF)" if link.simulation else "REAL (NRF aktif)")
+    print("Perintah:")
+    print("   FW <10-200>     maju sekian sentimeter")
+    print("   CW <1-180>      putar kanan sekian derajat")
+    print("   CCW <1-180>     putar kiri sekian derajat")
+    print("   MISI <p> <l>    susun & jalankan sapuan zigzag tambak p x l meter")
+    print("   STOP            berhenti darurat")
+    print("   KELUAR")
 
-    print("=== FEEDER TRANSMITTER (mode teks) ===")
-
-    HEARTBEAT_INTERVAL_S = 0.5
-    lock = threading.Lock()
-    state = {"mission_running": False}
-
-    def radio_send(payload: bytes) -> bool:
-        with lock:
-            return radio.write(payload)
-
-    def heartbeat_loop():
-        while True:
-            if state["mission_running"]:
-                radio_send(b"PING")
-            time.sleep(HEARTBEAT_INTERVAL_S)
-
-    threading.Thread(target=heartbeat_loop, daemon=True).start()
+    def wait_idle():
+        while runner.is_busy():
+            time.sleep(0.2)
+        print(f"  -> {runner.state.status.value}")
 
     while True:
-        panjang = input("Panjang Tambak (m) [ketik STOP untuk batalkan misi]: ").strip()
-
-        if panjang.upper() == "STOP":
-            state["mission_running"] = False
-            time.sleep(HEARTBEAT_INTERVAL_S)
-            ok = False
-            for _ in range(5):
-                if radio_send(b"STOP"):
-                    ok = True
-                time.sleep(0.05)
-            print("STOP terkirim — misi dibatalkan" if ok else "STOP FAILED — cek NRF")
-            print()
+        try:
+            raw = input("\nperintah> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            raw = "KELUAR"
+        if not raw:
             continue
 
-        lebar = input("Lebar Tambak (m): ").strip()
-        payload = f"P={panjang};L={lebar};MODE=AUTO".encode()
-        print("SEND :", payload.decode())
+        parts = raw.split()
+        verb = parts[0].upper()
 
-        ok = False
-        for _ in range(5):
-            if radio_send(payload):
-                ok = True
-            time.sleep(0.05)
+        if verb == "KELUAR":
+            runner.abort()
+            print("Selesai.")
+            return
 
-        print("SUCCESS — heartbeat PING berjalan otomatis" if ok
-              else "FAILED — cek koneksi NRF")
-        state["mission_running"] = True
-        print()
+        if verb == "STOP":
+            runner.abort()
+            continue
+
+        if verb == "MISI":
+            if len(parts) < 3:
+                print("Format: MISI <panjang_m> <lebar_m>")
+                continue
+            try:
+                plan = plan_coverage(float(parts[1]), float(parts[2]))
+            except ValueError:
+                print("Panjang & lebar harus angka.")
+                continue
+            queue = plan_command_queue(plan)
+            print(f"{plan.n_lanes} jalur -> {len(queue)} perintah, "
+                  f"~{queue_duration_s(queue, plan.speed_mps):.0f} detik")
+            ok, msg = runner.run(queue, label="MISI")
+            print(msg)
+            if ok:
+                wait_idle()
+            continue
+
+        if verb in MOVE_RANGE and len(parts) >= 2:
+            try:
+                cmd = RobotCommand(verb, int(parts[1]))
+            except ValueError:
+                print("[Dist] harus bilangan bulat.")
+                continue
+            valid, msg = cmd.validate()
+            if not valid:
+                print(msg)
+                continue
+            ok, msg = runner.run([cmd], label="MANUAL")
+            print(msg)
+            if ok:
+                wait_idle()
+            continue
+
+        print("Perintah tidak dikenali.")
 
 
 # =====================================================================
@@ -115,7 +140,7 @@ def main():
     if "--cli" in sys.argv or "-c" in sys.argv:
         run_cli()
     else:
-        run_gui()
+        run_gui(fullscreen="--windowed" not in sys.argv)
 
 
 if __name__ == "__main__":

@@ -130,6 +130,12 @@ story.append(Table(
       Paragraph("Prototyping Model", styles["Cell"])],
      [Paragraph("Framework GUI", styles["Cell"]),
       Paragraph("Python 3 + CustomTkinter", styles["Cell"])],
+     [Paragraph("Target Tampilan", styles["Cell"]),
+      Paragraph("Layar sentuh 7&quot; (800 &times; 480 px) — adaptif mengikuti layar perangkat",
+                styles["Cell"])],
+     [Paragraph("Protokol Kendali", styles["Cell"]),
+      Paragraph("FW / CW / CCW / STOP + ON &amp; FIN "
+                "(Dokumen Spesifikasi Teknis)", styles["Cell"])],
      [Paragraph("Tanggal", styles["Cell"]),
       Paragraph(datetime.now().strftime("%d %B %Y"), styles["Cell"])]],
     colWidths=[4 * cm, 11 * cm],
@@ -158,32 +164,47 @@ bullets([
     "Menerima <b>titik awal robot</b>, <b>lebar lintasan</b>, dan <b>kecepatan</b>, lalu "
     "menerjemahkan tambak persegi menjadi <b>path/jalur</b> berupa daftar langkah "
     "&quot;maju x m / belok y&deg;&quot; (pola zigzag) yang diikuti robot.",
-    "Menyediakan <b>keypad numerik pada layar</b> (point-and-click) agar dapat "
-    "dioperasikan tanpa keyboard fisik.",
+    "Menerapkan <b>protokol Sinyal Kendali</b> sesuai Dokumen Spesifikasi Teknis: "
+    "perintah <b>FW / CW / CCW / STOP</b> dengan pola Request-Response beserta sinyal "
+    "balik <b>ON</b> dan <b>FIN</b>.",
+    "Menyediakan <b>kendali manual</b> untuk memasukkan sendiri perintah FW, CW, dan CCW "
+    "di samping STOP yang sudah ada.",
+    "Menyesuaikan tampilan dengan <b>ukuran layar perangkat</b> &mdash; dirancang untuk "
+    "<b>layar sentuh 7 inci</b> bergaya mesin ATM: minimalis dan bertombol besar, "
+    "namun seluruh fitur dipertahankan.",
+    "Menyediakan <b>papan angka pada layar</b> agar dapat dioperasikan tanpa keyboard fisik.",
     "Menampilkan <b>preview jalur</b> pada kanvas (peta tambak + arah tempuh) dan daftar "
-    "langkah gerak sebelum misi dikirim.",
+    "perintah yang akan dikirim sebelum misi dijalankan.",
     "Menampilkan status koneksi modul NRF24 dan keterjangkauan robot secara nyata.",
     "Memberi kontrol manual untuk mematikan komponen yang relevan.",
     "Menampilkan telemetri (estimasi) kecepatan &amp; RPM baling-baling secara realtime.",
-    "Menampilkan data sensor MPU6050 (roll, pitch, yaw/heading) secara nyata via serial USB.",
+    "Menampilkan data sensor MPU (roll, pitch, yaw/heading) secara nyata via radio &amp; "
+    "serial USB.",
     "Mencatat seluruh aktivitas dan mengekspornya sebagai berkas log (CSV/TXT).",
 ])
 h2("1.3 Ruang Lingkup & Batasan")
 p("GUI berjalan di sisi <b>Transmitter</b> (Raspberry Pi) sebagai pengganti CLI. "
-  "Pada iterasi ini firmware robot (ESP32, <b>Finalnew.ino</b>) turut <b>diperbarui</b>: "
-  "protokol misi diperluas (menerima kecepatan, lebar lintasan, dan arah belok) dan pola "
-  "belok diperbaiki agar sapuan menutupi seluruh tambak (lihat 4.5). "
-  "Konsekuensi batasan teknis yang teridentifikasi pada tahap analisis:")
+  "Pada iterasi ini firmware robot (ESP32, <b>Finalnew.ino</b>) turut <b>ditulis ulang</b> "
+  "agar perilakunya mengikuti Dokumen Spesifikasi Teknis: robot berubah dari penjalan "
+  "misi mandiri menjadi <b>eksekutor perintah</b> yang menjalankan satu gerakan dalam satu "
+  "waktu dan melapor lewat ON/FIN (lihat 4.2). Konsekuensi batasan teknis yang "
+  "teridentifikasi pada tahap analisis:")
 bullets([
     "<b>Komunikasi dua arah half-duplex.</b> Radio NRF dipakai bergantian (&quot;gantian&quot; "
-    "seperti radio HT): Pi mengirim perintah/PING, robot membalas telemetri MPU di sela-selanya "
-    "(alamat balik 00002). Bukan full-duplex, jadi kirim/terima tidak bersamaan.",
+    "seperti radio HT): Pi mengirim perintah/PING, robot membalas ON/FIN dan telemetri MPU "
+    "di sela-selanya (alamat balik 00002). Bukan full-duplex, jadi kirim/terima tidak bersamaan.",
     "<b>Tidak ada sensor RPM/encoder</b> pada robot. Maka nilai RPM &amp; kecepatan "
     "yang ditampilkan adalah <b>ESTIMASI</b> yang dihitung dari nilai PWM throttle, "
     "bukan hasil pengukuran.",
-    "<b>Kontrol komponen individual</b> (mis. mematikan satu motor atau MPU) "
-    "memerlukan protokol dua arah — di luar lingkup iterasi ini; ditandai sebagai "
-    "indikator <i>monitor</i>.",
+    "<b>Jarak FW diturunkan dari waktu tempuh</b> (jarak &divide; kecepatan jelajah), "
+    "bukan dari odometri. Ketepatan jarak karena itu bergantung pada kalibrasi "
+    "ROBOT_SPEED_MPS dan dipengaruhi arus air.",
+    "<b>ESC bersifat unidirectional</b> (hanya maju), sehingga CW/CCW dilakukan dengan "
+    "<i>differential thrust</i>: robot berputar melingkar lebar, bukan di tempat. Sudut "
+    "akhirnya tetap akurat karena putaran ditutup memakai umpan balik yaw MPU, tetapi "
+    "robot ikut berpindah posisi selama berputar.",
+    "<b>Kontrol komponen individual</b> (mis. mematikan satu motor atau MPU) belum "
+    "memiliki perintah pada tabel protokol; ditandai sebagai indikator <i>monitor</i>.",
 ])
 note("Kejujuran teknis ini justru menjadi bahan analisis yang baik: keterbatasan "
      "menjadi 'kebutuhan iterasi berikutnya' — sesuai semangat Prototyping.")
@@ -211,17 +232,19 @@ table(["Fase", "Aktivitas pada proyek ini"],
         "Rancang tata letak GUI &amp; pemisahan arsitektur core/GUI; definisikan "
         "protokol paket (misi/PING/STOP)."],
        ["3. Bangun Prototipe",
-        "Implementasi feeder_core.py (RadioLink, MissionEstimator, ActivityLogger) "
-        "dan feeder_gui.py (CustomTkinter)."],
+        "Implementasi feeder_core.py (RobotCommand, RadioLink, CommandRunner, "
+        "ActivityLogger) dan feeder_gui.py (CustomTkinter)."],
        ["4. Evaluasi oleh Pengguna",
         "Demo ke pembimbing memakai MODE SIMULASI (tanpa hardware), lalu uji nyata "
         "di Raspberry Pi + robot."],
        ["5. Perbaikan (Refinement)",
         "Revisi berdasar umpan balik: iterasi-1 (label 'estimasi', LED status, penanganan "
         "input); iterasi-2 (perencanaan jalur, titik awal &amp; kecepatan, keypad layar, "
-        "preview jalur, perbaikan pola belok). Ulangi fase 3–5."],
+        "preview jalur, perbaikan pola belok); iterasi-3 (tampilan mengikuti layar "
+        "perangkat bergaya ATM, perilaku robot mengikuti Dokumen Spesifikasi Teknis, "
+        "kendali manual FW/CW/CCW). Ulangi fase 3–5."],
        ["6. Rekayasa Produk & Pemeliharaan",
-        "Stabilkan, dokumentasikan, siapkan iterasi lanjutan (telemetri 2 arah)."]],
+        "Stabilkan, dokumentasikan, siapkan iterasi lanjutan (odometri &amp; sensor RPM)."]],
       [4.2 * cm, 10.8 * cm])
 h2("2.3 Siklus Iterasi (Prototyping Loop)")
 code("  Kebutuhan  ->  Quick Design  ->  Bangun Prototipe\n"
@@ -255,7 +278,17 @@ table(["Kode", "Kebutuhan", "Status"],
        ["RF-11", "Mengirim parameter misi ke robot (kecepatan, lebar lintasan, arah belok)",
         "Terpenuhi (real)"],
        ["RF-12", "Menerima telemetri MPU (roll/pitch/yaw) balik dari robot via radio (2 arah)",
-        "Terpenuhi (real)"]],
+        "Terpenuhi (real)"],
+       ["RF-13", "Protokol Request-Response &quot;[Moves]:[Dist]&quot; dengan sinyal balik "
+        "ON &amp; FIN sesuai Dokumen Spesifikasi Teknis", "Terpenuhi (real)"],
+       ["RF-14", "Mengirim ulang perintah bila &quot;ON [Moves]&quot; tak diterima dalam 1 detik",
+        "Terpenuhi (real)"],
+       ["RF-15", "Input manual perintah FW, CW, dan CCW (STOP sudah ada)",
+        "Terpenuhi (real)"],
+       ["RF-16", "Menolak [Dist] di luar rentang tabel perintah sebelum paket dikirim",
+        "Terpenuhi"],
+       ["RF-17", "Tampilan mengikuti ukuran layar perangkat (layar sentuh 7 inci, gaya ATM)",
+        "Terpenuhi"]],
       [1.7 * cm, 10.3 * cm, 3 * cm])
 h2("3.2 Kebutuhan Non-Fungsional")
 bullets([
@@ -272,46 +305,94 @@ h2("4.1 Arsitektur Perangkat Lunak")
 p("Menerapkan <i>Separation of Concerns</i>: lapisan presentasi (GUI) dipisah dari "
   "logika (core), sehingga mudah diuji dan dikembangkan.")
 table(["Modul", "Tanggung jawab"],
-      [["feeder_gui.py", "Presentasi: input, keypad layar, kanvas preview jalur, tombol, "
-        "gauge, LED, tampilan log."],
-       ["feeder_core.py -&gt; plan_coverage / CoveragePlan",
+      [["feeder_gui.py", "Presentasi: halaman bergaya ATM, papan angka layar, kanvas "
+        "preview jalur, tombol, gauge, LED, tampilan log."],
+       ["feeder_core.py -&gt; RobotCommand",
+        "Satu paket Sinyal Kendali &quot;[Moves]:[Dist]&quot; + validasi rentang "
+        "sesuai tabel perintah dokumen spesifikasi."],
+       ["feeder_core.py -&gt; plan_coverage / plan_command_queue",
         "Terjemahkan tambak + titik awal + lebar lintasan -&gt; daftar segmen "
-        "&quot;maju/belok&quot; + encode_mission (paket ke robot)."],
+        "&quot;maju/belok&quot; -&gt; ANTREAN perintah FW/CW/CCW."],
        ["feeder_core.py -&gt; RadioLink",
-        "Abstraksi NRF24 (pyrf24) + auto-fallback MockRadio (simulasi)."],
-       ["feeder_core.py -&gt; MissionEstimator",
-        "Cermin timeline zigzag firmware -&gt; estimasi fase/PWM/RPM per waktu."],
+        "Abstraksi NRF24 (pyrf24) + auto-fallback MockRadio (simulasi); merutekan "
+        "sinyal balik ON/FIN dan telemetri MPU."],
+       ["feeder_core.py -&gt; CommandRunner",
+        "Pelaksana pola Request-Response: kirim perintah, tunggu ON (kirim ulang bila "
+        "lewat 1 detik), tunggu FIN, lanjut perintah berikutnya."],
        ["feeder_core.py -&gt; ActivityLogger",
         "Pencatatan aktivitas berstempel waktu + ekspor CSV/TXT."]],
       [5.6 * cm, 9.4 * cm])
-h2("4.2 Protokol Komunikasi (diperluas, tetap kompatibel-mundur)")
+h2("4.2 Protokol Sinyal Kendali (mengikuti Dokumen Spesifikasi Teknis)")
+p("Protokol mengikuti bab <b>Skema Komunikasi</b> pada <i>Dokumen Spesifikasi Teknis "
+  "&mdash; Robot Akuatik untuk Tambak Ikan</i>, yang mengadopsi skema <b>DJI Tello "
+  "SDK 2.0</b>. Sinyal Kendali <b>selalu diinisiasi Pengendali Utama</b>; Body Robot "
+  "memberi respon. Setiap perintah dihitung sebagai satu paket komunikasi dengan pola "
+  "<b>Request-Response</b>.")
 table(["Paket", "Arah", "Makna"],
-      [["P=&lt;m&gt;;L=&lt;m&gt;;MODE=AUTO;<br/>SPD=&lt;m/s&gt;;LW=&lt;m&gt;;DIR=&lt;R|L&gt;",
-        "Pi -&gt; Robot",
-        "Perintah misi zigzag + kecepatan (SPD), lebar lintasan (LW), arah belok "
-        "pertama (DIR). Field SPD/LW/DIR opsional; bila tak ada robot memakai default."],
-       ["PING", "Pi -&gt; Robot", "Heartbeat (jaga failsafe) tiap 0,5 s + pemicu giliran telemetri"],
-       ["STOP", "Pi -&gt; Robot", "Batalkan misi / matikan motor"],
+      [["[Moves]:[Dist]", "Pi -&gt; Robot",
+        "Perintah gerak. Contoh &quot;FW:100&quot; = maju lurus 100 cm; "
+        "&quot;CCW:90&quot; = berputar berlawanan jarum jam 90&deg;."],
+       ["ON [Moves]", "Robot -&gt; Pi",
+        "Dikirim berkali-kali dengan jeda 1 detik SELAMA gerakan berlangsung, agar "
+        "Pengendali Utama tahu perintah sedang dijalankan."],
+       ["FIN [Moves]:[Dist]", "Robot -&gt; Pi",
+        "Gerakan selesai dieksekusi dengan baik. Menjadi izin bagi Pengendali Utama "
+        "untuk mengirim perintah berikutnya."],
+       ["PING", "Pi -&gt; Robot",
+        "Heartbeat (jaga failsafe robot) tiap 0,5 s + pemicu giliran bicara robot"],
        ["(ACK otomatis)", "Robot -&gt; Pi",
         "Auto-ACK NRF; True = robot hidup &amp; terjangkau"],
        ["R=&lt;roll&gt;;P=&lt;pitch&gt;;Y=&lt;yaw&gt;", "Robot -&gt; Pi",
-        "Telemetri MPU (alamat balik 00002, NOACK) — komunikasi 2 arah half-duplex"]],
-      [6 * cm, 2.6 * cm, 6.4 * cm])
-p("Paket lama <b>P=..;L=..;MODE=AUTO</b> tetap valid — firmware baru mengabaikan "
-  "field yang tak ada dan memakai konstanta default, sehingga tidak memutus kompatibilitas.")
-p("<b>Telemetri 2 arah (half-duplex &quot;gantian&quot;).</b> NRF24 tidak bisa kirim &amp; terima "
-  "bersamaan, jadi kedua sisi bergantian seperti radio HT: Pi mengirim PING (mode TX) lalu "
-  "mendengar ~70 ms (mode RX); robot yang menerima PING sejenak <i>stopListening</i>, mengirim "
-  "data MPU tanpa ACK (~1 ms), lalu <i>startListening</i> lagi. Window TX yang sangat pendek + "
-  "throttle menjaga heartbeat &amp; kendali tidak terganggu.")
-h2("4.3 Dasar Estimasi Telemetri")
-p("Karena tak ada sensor, GUI menghitung PWM yang <i>seharusnya</i> dijalankan robot "
-  "pada detik ke-t (mengikuti pola gerak firmware), lalu mengonversinya:")
+        "Telemetri MPU (tambahan di luar spesifikasi wajib) — alamat balik 00002, NOACK"]],
+      [4.6 * cm, 2.6 * cm, 7.8 * cm])
+p("<b>Daftar perintah</b> beserta rentang [Dist] yang sah (tabel perintah pada dokumen "
+  "spesifikasi). GUI menolak nilai di luar rentang ini sebelum paket dikirim, dan "
+  "firmware memvalidasinya sekali lagi saat paket diterima:")
+table(["No", "Moves", "Dist Range", "Deskripsi"],
+      [["1", "FW", "10&ndash;200", "Maju lurus ke depan (satuan sentimeter)"],
+       ["2", "CW", "1&ndash;180",
+        "Berputar searah jarum jam / ke kanan (satuan derajat)"],
+       ["3", "CCW", "1&ndash;180",
+        "Berputar berlawanan arah jarum jam / ke kiri (satuan derajat)"],
+       ["4", "STOP", "0",
+        "Menghentikan motor. Digunakan untuk berhenti secara darurat."]],
+      [1.2 * cm, 2 * cm, 2.6 * cm, 9.2 * cm])
+p("<b>Penanganan kegagalan.</b> Bila Pengendali Utama tidak menerima "
+  "<b>ON [Moves]</b> dalam <b>1 detik</b>, perintah dianggap gagal dijalankan dan "
+  "<b>dikirim ulang</b> (hingga 5 percobaan). Agar paket kiriman ulang tidak menjadi "
+  "gerakan ganda, robot mengabaikan perintah gerak baru selama masih ada gerakan "
+  "berjalan &mdash; kecuali STOP, yang selalu dilayani seketika.")
+code("Pi  ->  FW:200                      (kirim perintah)\n"
+     "Pi  <-  ON FW                       (< 1 detik, kalau tidak -> kirim ulang)\n"
+     "Pi  <-  ON FW                       (berulang tiap 1 detik selama bergerak)\n"
+     "Pi  <-  FIN FW:200                  (gerakan selesai -> lanjut perintah ke-2)")
+p("<b>Perubahan peran robot.</b> Pada iterasi sebelumnya robot menerima satu paket misi "
+  "(P/L/MODE) lalu menjalankan seluruh pola zigzag sendiri di dalam firmware. Kini "
+  "seluruh pola disusun dan dikemudikan <b>Pengendali Utama</b>, sedangkan robot menjadi "
+  "<b>eksekutor satu perintah</b> yang melapor lewat ON/FIN. Konsekuensinya kemajuan misi "
+  "yang ditampilkan GUI adalah <b>konfirmasi nyata dari robot</b>, bukan lagi perkiraan "
+  "berbasis penghitung waktu.")
+p("<b>Komunikasi 2 arah half-duplex (&quot;gantian&quot;).</b> NRF24 tidak bisa kirim &amp; "
+  "terima bersamaan, jadi kedua sisi bergantian seperti radio HT: Pi mengirim paket "
+  "(mode TX) lalu mendengar sejenak (mode RX); robot yang menerima paket sebentar "
+  "<i>stopListening</i>, mengirim ON/FIN/telemetri tanpa ACK, lalu <i>startListening</i> "
+  "lagi. Window TX yang sangat pendek menjaga perintah tidak terlewat.")
+h2("4.3 Dasar Estimasi Telemetri Baling-baling")
+p("Robot tidak memiliki sensor RPM, sehingga gauge baling-baling tetap berupa "
+  "<b>estimasi</b>. Bedanya dengan iterasi lalu: estimasi kini diturunkan dari "
+  "<b>perintah yang sedang benar-benar dijalankan</b> (diketahui dari sinyal ON/FIN), "
+  "bukan dari cermin penghitung waktu firmware.")
+table(["Perintah berjalan", "PWM kiri", "PWM kanan", "Alasan"],
+      [["FW", "CRUISE", "CRUISE", "Kedua motor maju"],
+       ["CW (kanan)", "CRUISE", "STOP", "Differential thrust ke kanan"],
+       ["CCW (kiri)", "STOP", "CRUISE", "Differential thrust ke kiri"],
+       ["tidak ada / STOP", "STOP", "STOP", "Motor diam"]],
+      [3.6 * cm, 2.6 * cm, 2.6 * cm, 6.2 * cm])
 code("throttle = (PWM - 1000) / (2000 - 1000)\n"
      "RPM_est  = throttle * MOTOR_KV * BATTERY_V     (default KV=2200, V=11.1)\n"
      "speed_est= ROBOT_SPEED_MPS * throttle / throttle(CRUISE_PWM)")
-note("Konstanta MOTOR_KV, BATTERY_V, CRUISE_PWM, TURN_90_MS wajib disamakan dengan "
-     "firmware &amp; dikalibrasi pada pengujian air agar estimasi mendekati kenyataan.")
+note("Konstanta MOTOR_KV, BATTERY_V, CRUISE_PWM, dan ROBOT_SPEED_MPS wajib disamakan "
+     "dengan firmware &amp; dikalibrasi pada pengujian air agar estimasi mendekati kenyataan.")
 h2("4.4 Integrasi Data MPU6050 (Radio NRF &amp; Serial USB)")
 p("Data orientasi diambil <b>langsung dari sensor MPU6050</b> (bukan estimasi) melalui "
   "<b>dua jalur</b>: (1) <b>radio NRF 2 arah</b> — robot mengirim balik roll/pitch/yaw "
@@ -326,92 +407,180 @@ p("Roll (X), Pitch (Y), dan Yaw/heading (Z) ditampilkan realtime dan dapat direk
   "log untuk diekspor. Dengan jalur radio, heading kini <b>terbaca nyata saat robot "
   "berlayar bebas</b> — tidak lagi bergantung pada kabel USB.")
 
-h2("4.5 Perencanaan Jalur (Path Planning)")
+h2("4.5 Perencanaan Jalur &amp; Penyusunan Antrean Perintah")
 p("Fungsi <b>plan_coverage()</b> menerjemahkan tambak persegi menjadi jalur sapuan "
   "<i>boustrophedon</i> (zigzag). Dari masukan pengguna &mdash; panjang, lebar, "
   "<b>lebar lintasan</b>, <b>kecepatan</b>, dan <b>titik awal</b> (sudut tambak) &mdash; "
   "dihitung titik-titik belok (waypoint), lalu diturunkan menjadi daftar langkah "
-  "eksplisit &quot;maju x meter&quot; dan &quot;belok kanan/kiri y&deg;&quot;. Daftar ini "
-  "ditampilkan ke pengguna dan dasar paket yang dikirim ke robot (SPD/LW/DIR).")
+  "eksplisit &quot;maju x meter&quot; dan &quot;belok kanan/kiri y&deg;&quot;.")
+p("Selanjutnya <b>plan_command_queue()</b> mengubah daftar langkah itu menjadi "
+  "<b>antrean paket Sinyal Kendali</b>. Karena rentang FW dibatasi 10&ndash;200 cm, "
+  "lintasan panjang otomatis <b>dipecah rata</b> menjadi beberapa perintah FW "
+  "berurutan &mdash; pembagian dibuat rata agar tidak menyisakan potongan di bawah "
+  "batas minimum (mis. 10,05 m menjadi 6&times;167 cm, bukan 5&times;200 cm + sisa 5 cm "
+  "yang tak bisa diperintahkan). Belok kanan menjadi <b>CW</b>, belok kiri menjadi "
+  "<b>CCW</b>.")
 p("Koordinat: sumbu-x menyusuri lebar, sumbu-y menyusuri panjang. Robot menjelajah "
   "lurus arah-y tiap lintasan, lalu U-turn menggeser sejauh satu lebar lintasan arah-x.")
-code("Contoh: tambak 10 x 4 m, lebar lintasan 1 m, mulai Kiri-Bawah -> 4 lintasan:\n"
-     "  1. Maju 10.0 m        5. Maju 10.0 m         9. Maju 10.0 m\n"
-     "  2. Belok kanan 90     6. Belok kiri 90      10. Belok kanan 90\n"
-     "  3. Maju 1.0 m         7. Maju 1.0 m         11. Maju 1.0 m\n"
-     "  4. Belok kanan 90     8. Belok kiri 90      12. Belok kanan 90\n"
-     "                                              13. Maju 10.0 m\n"
-     "  Paket: P=10;L=4;MODE=AUTO;SPD=0.5;LW=1;DIR=R")
-p("<b>Perbaikan pola belok (temuan iterasi ini).</b> Versi sebelumnya melakukan U-turn "
-  "yang <b>selalu belok kanan</b>. Secara geometri hal ini menggeser robot ke kanan lalu "
-  "ke kiri bergantian, sehingga robot hanya bolak-balik di dua kolom dan <b>tidak menyapu "
-  "seluruh lebar tambak</b>. Diperbaiki menjadi arah U-turn <b>berselang-seling</b> "
-  "(kanan-kanan, lalu kiri-kiri, dst) sehingga geseran selalu ke sisi yang sama &mdash; "
-  "sapuan menutupi seluruh tambak. GUI dan firmware kini menghitung arah belok dari sumber "
-  "yang sama, jadi <b>preview jalur = gerak nyata robot</b>.")
-note("Titik awal dapat dipilih lewat menu atau <b>diklik langsung pada kanvas peta</b>; "
-     "arah belok pertama (DIR) dihitung dari titik awal agar robot menyapu ke arah dalam "
-     "tambak.")
+code("Contoh: tambak 10 x 4 m, lebar lintasan 1 m, mulai Kiri-Bawah -> 4 lintasan\n"
+     "\n"
+     "  Langkah jalur                  Antrean perintah kendali (29 paket)\n"
+     "  1. Maju 10.0 m           ->    FW:200  FW:200  FW:200  FW:200  FW:200\n"
+     "  2. Belok kanan 90        ->    CW:90\n"
+     "  3. Maju 1.0 m            ->    FW:100\n"
+     "  4. Belok kanan 90        ->    CW:90\n"
+     "  5. Maju 10.0 m           ->    FW:200 x5\n"
+     "  6. Belok kiri 90         ->    CCW:90\n"
+     "  ...                            (dst hingga seluruh lebar tersapu)")
+p("<b>Pola belok berselang-seling.</b> U-turn yang <b>selalu belok kanan</b> secara "
+  "geometri menggeser robot ke kanan lalu ke kiri bergantian, sehingga robot hanya "
+  "bolak-balik di dua kolom dan <b>tidak menyapu seluruh lebar tambak</b>. Arah U-turn "
+  "karena itu dibuat <b>berselang-seling</b> (kanan-kanan, lalu kiri-kiri, dst) sehingga "
+  "geseran selalu ke sisi yang sama. Karena antrean perintah dihitung dari jalur yang "
+  "sama dengan yang digambar di layar, <b>preview jalur = gerak nyata robot</b>.")
+note("Titik awal dapat dipilih lewat menu atau <b>disentuh langsung pada kanvas peta</b>; "
+     "arah belok pertama dihitung dari titik awal agar robot menyapu ke arah dalam tambak.")
+
+h2("4.6 Rancangan Antarmuka Mengikuti Layar Perangkat")
+p("Menindaklanjuti umpan balik pembimbing, tata letak dirancang ulang agar "
+  "<b>mengikuti ukuran layar perangkat</b> dan nyaman disentuh pada "
+  "<b>layar sentuh 7 inci</b> (800 &times; 480 piksel) &mdash; dengan gaya "
+  "<b>mesin ATM</b>: minimalis, target sentuh besar, satu layar untuk satu tugas, "
+  "namun <b>seluruh fitur dipertahankan</b>.")
+bullets([
+    "<b>Fullscreen adaptif.</b> Jendela mengambil resolusi layar perangkat "
+    "(<i>winfo_screenwidth/height</i>) dan berjalan tanpa bilah judul. Ukuran huruf, "
+    "tinggi tombol, dan jarak antar elemen dikalikan faktor skala "
+    "<i>S = min(lebar/800, tinggi/480)</i> yang dijepit pada rentang 0,85&ndash;2,0 "
+    "sehingga tampilan tetap proporsional di layar 7 inci maupun monitor besar.",
+    "<b>Pemecahan menjadi halaman.</b> Panel yang sebelumnya menumpuk dalam satu layar "
+    "padat dipecah menjadi enam halaman dengan navigasi tombol besar di bagian bawah.",
+    "<b>Tombol STOP permanen.</b> Berhenti darurat diletakkan di bilah status atas "
+    "sehingga <b>selalu terlihat dan terjangkau dari halaman mana pun</b>.",
+    "<b>Papan angka sebagai lapisan penuh.</b> Menyentuh sebuah kolom membuka papan "
+    "angka satu layar penuh dengan tombol besar dan tombol OK / HAPUS / BATAL, "
+    "sehingga halaman tetap lega tanpa kehilangan kemampuan input tanpa keyboard.",
+])
+code("+--------------------------------------------------+\n"
+     "|  judul        [MODE][NRF][ROBOT]      [ STOP ]   |  bilah status\n"
+     "+--------------------------------------------------+\n"
+     "|                                                  |\n"
+     "|                  ISI HALAMAN                     |\n"
+     "|                                                  |\n"
+     "+--------------------------------------------------+\n"
+     "| BERANDA | MISI | MANUAL | SENSOR | LOG | SISTEM  |  navigasi\n"
+     "+--------------------------------------------------+")
+table(["Halaman", "Isi"],
+      [["BERANDA", "Status robot, perintah yang sedang berjalan, kemajuan antrean, "
+        "perkiraan waktu, arah hadap; tombol besar menuju MISI &amp; MANUAL."],
+       ["MISI", "Panjang, lebar, lebar lintasan, kecepatan, titik awal; preview jalur "
+        "pada kanvas; daftar antrean perintah; tombol KIRIM MISI."],
+       ["MANUAL", "Input manual FW / CW / CCW: nilai besar, tombol &minus;/+, papan "
+        "angka, dan tombol KIRIM per perintah."],
+       ["SENSOR", "Gauge RPM/throttle/kecepatan baling-baling kiri &amp; kanan "
+        "(estimasi) serta Roll/Pitch/Yaw MPU (real) + kontrol sumber data."],
+       ["LOG", "Catatan aktivitas realtime + Export CSV / Export TXT / Clear."],
+       ["SISTEM", "Saklar komponen (NRF, Heartbeat, Motor), indikator monitor, mode "
+        "simulasi, informasi layar, dan tombol keluar."]],
+      [3 * cm, 12 * cm])
 
 # ===================================================================== 5
 h1("5. Implementasi Prototipe")
 h2("5.1 Fitur GUI")
 bullets([
-    "<b>Panel Misi:</b> input Panjang, Lebar, Lebar lintasan, Kecepatan (m/s), dan "
-    "Titik awal (sudut tambak); tombol PREVIEW JALUR, KIRIM MISI &amp; STOP.",
-    "<b>Keypad numerik:</b> tombol 0&ndash;9, titik, hapus &amp; backspace pada layar &mdash; "
-    "ketuk kolom lalu ketik; memungkinkan operasi <b>tanpa keyboard fisik</b> (layar sentuh).",
-    "<b>Preview Jalur:</b> kanvas peta tambak menggambar lintasan zigzag berpanah + titik "
-    "START (klik peta = pilih titik awal), disertai daftar langkah &quot;maju/belok&quot; "
-    "dan ringkasan (jumlah lintasan, jarak, estimasi waktu).",
-    "<b>Status Koneksi:</b> mode (REAL/SIMULASI), deteksi modul NRF, status robot.",
-    "<b>Kontrol Komponen:</b> saklar NRF TX, Heartbeat PING, Motor (efek nyata "
-    "lewat STOP); indikator monitor Motor Kiri/Kanan &amp; MPU.",
-    "<b>Telemetri:</b> fase misi, progress bar, gauge RPM/throttle/speed L &amp; R.",
-    "<b>Sensor MPU6050:</b> tampil Roll/Pitch/Yaw realtime via <b>radio NRF (2 arah)</b> "
-    "saat robot berlayar, atau serial USB saat uji bench; opsi rekam ke log.",
-    "<b>Log:</b> tampilan realtime + tombol Export CSV / Export TXT / Clear.",
+    "<b>Halaman BERANDA:</b> status robot berukuran besar (SIAP / MENGIRIM PERINTAH / "
+    "ROBOT BERGERAK / KIRIM ULANG / SELESAI / DIBATALKAN / GAGAL), paket perintah yang "
+    "sedang dijalankan, kemajuan antrean, perkiraan sisa waktu, dan arah hadap.",
+    "<b>Halaman MISI:</b> input Panjang, Lebar, Lebar lintasan, Kecepatan (m/s), dan "
+    "Titik awal; kanvas preview jalur zigzag berpanah + titik START (sentuh peta = pilih "
+    "titik awal); daftar <b>antrean perintah kendali</b> yang akan dikirim beserta "
+    "ringkasan (jumlah lintasan, jarak, jumlah perintah, estimasi waktu).",
+    "<b>Halaman MANUAL:</b> input manual <b>FW / CW / CCW</b> &mdash; tiga kartu besar "
+    "berisi nilai, tombol &minus;/+, papan angka, dan tombol KIRIM. Rentang sah "
+    "ditampilkan dan divalidasi; nilai di luar rentang ditolak sebelum dikirim.",
+    "<b>Papan angka layar penuh:</b> tombol 0&ndash;9, titik, backspace, HAPUS, BATAL, "
+    "OK &mdash; muncul saat kolom disentuh; memungkinkan operasi <b>tanpa keyboard "
+    "fisik</b> pada layar sentuh.",
+    "<b>Status Koneksi:</b> chip MODE (REAL/SIMULASI), MODUL NRF, dan ROBOT pada bilah "
+    "atas &mdash; terlihat di semua halaman.",
+    "<b>Tombol STOP permanen</b> pada bilah atas: mengirim <b>STOP:0</b> dan membatalkan "
+    "sisa antrean dari halaman mana pun.",
+    "<b>Halaman SENSOR:</b> gauge RPM/throttle/kecepatan baling-baling kiri &amp; kanan, "
+    "serta Roll/Pitch/Yaw MPU realtime via <b>radio NRF (2 arah)</b> saat robot berlayar "
+    "atau serial USB saat uji bench; opsi rekam ke log.",
+    "<b>Halaman LOG:</b> catatan realtime seluruh siklus protokol (KIRIM &rarr; GERAK "
+    "&rarr; SELESAI) + tombol Export CSV / Export TXT / Clear.",
+    "<b>Halaman SISTEM:</b> saklar NRF TX, Heartbeat PING, dan Motor (efek nyata lewat "
+    "STOP); indikator monitor Motor Kiri/Kanan &amp; MPU; mode simulasi; informasi "
+    "resolusi layar &amp; faktor skala.",
 ])
 h2("5.2 Mode Simulasi")
 p("Bila pyrf24 tidak tersedia atau NRF tak terdeteksi, RadioLink otomatis memakai "
-  "MockRadio; demikian pula MPUSerialReader menyediakan mode simulasi bila serial "
-  "tidak tersedia. Dengan begitu GUI tetap dapat didemokan dan diuji tanpa "
-  "perangkat keras — sangat membantu pada fase evaluasi Prototyping.")
+  "<b>MockRadio</b>; demikian pula MPUSerialReader menyediakan mode simulasi bila serial "
+  "tidak tersedia. Pada iterasi ini MockRadio <b>meniru perilaku Body Robot secara "
+  "penuh</b>: menerima [Moves]:[Dist], membalas &quot;ON [Moves]&quot; tiap 1 detik, lalu "
+  "&quot;FIN [Moves]:[Dist]&quot; saat gerakan selesai, dan berhenti seketika saat "
+  "menerima STOP. Dengan begitu <b>seluruh alur Request-Response</b> dapat diuji dan "
+  "didemokan tanpa perangkat keras &mdash; sangat membantu pada fase evaluasi Prototyping.")
 h2("5.3 Tampilan Antarmuka")
+p("Seluruh tangkapan layar berikut diambil pada ukuran <b>800 &times; 480 piksel</b>, "
+  "yaitu resolusi layar sentuh 7 inci yang dipakai Pengendali Utama.")
 figure(SCREENSHOT,
-       "Gambar 1. Antarmuka GUI: panel misi (dimensi, lebar lintasan, kecepatan, titik "
-       "awal), keypad numerik &amp; preview jalur di kolom kiri; status, telemetri, "
-       "panel MPU6050 &amp; log aktivitas di kolom kanan.")
+       "Gambar 1. Halaman BERANDA: status robot, paket perintah yang sedang dijalankan, "
+       "kemajuan antrean, dan tombol STOP yang selalu terlihat di bilah atas.")
+figure("gui_misi.png",
+       "Gambar 2. Halaman MISI: input dimensi tambak di kiri; preview jalur zigzag dan "
+       "daftar antrean perintah kendali (FW/CW/CCW) yang akan dikirim di kanan.")
+figure("gui_manual.png",
+       "Gambar 3. Halaman MANUAL: input manual FW, CCW, dan CW dengan tombol besar, "
+       "penunjuk rentang sah, dan tombol KIRIM per perintah.")
+figure("gui_keypad.png",
+       "Gambar 4. Papan angka layar penuh &mdash; operasi tanpa keyboard fisik, "
+       "lengkap dengan penunjuk rentang nilai yang sah.")
+figure("gui_sensor.png",
+       "Gambar 5. Halaman SENSOR: gauge baling-baling (estimasi) dan sudut MPU (real).")
+figure("gui_log.png",
+       "Gambar 6. Halaman LOG: seluruh siklus protokol terekam &mdash; pengiriman "
+       "perintah, penerimaan ON, hingga FIN.")
+figure("gui_sistem.png",
+       "Gambar 7. Halaman SISTEM: saklar komponen, mode simulasi, dan informasi "
+       "resolusi layar beserta faktor skala tampilan.")
 
 # ===================================================================== 6
 h1("6. Pengujian (Black-Box)")
 table(["Uji", "Skenario", "Hasil Diharapkan"],
-      [["T-1", "Input P=10 L=4, klik KIRIM MISI",
-        "Paket terkirim, 4 jalur terhitung, gauge bergerak"],
+      [["T-1", "Input P=10 L=4, tekan KIRIM MISI",
+        "Antrean 29 perintah tersusun &amp; dijalankan berurutan"],
        ["T-2", "Robot online (ACK) di simulasi",
         "Status ROBOT = TERHUBUNG (hijau)"],
        ["T-3", "Robot offline",
         "Status ROBOT = TERPUTUS (merah) &lt; 3 s"],
        ["T-4", "Matikan saklar Motor",
-        "STOP terkirim, misi berhenti, LED motor merah"],
-       ["T-5", "Input non-angka",
+        "STOP:0 terkirim, antrean batal, LED motor merah"],
+       ["T-5", "Input non-angka pada dimensi",
         "Muncul dialog error, misi tidak dikirim"],
-       ["T-6", "Klik Export CSV/TXT",
+       ["T-6", "Tekan Export CSV/TXT",
         "Berkas log tersimpan &amp; berisi seluruh event"],
-       ["T-7", "Timeline estimasi habis",
-        "Fase = SELESAI, misi &amp; heartbeat berhenti otomatis"],
+       ["T-7", "Seluruh perintah tereksekusi",
+        "Status = SELESAI setelah FIN perintah terakhir diterima"],
        ["T-8", "Hubungkan MPU (serial/simulasi) + Rekam ke log",
         "Roll/Pitch/Yaw tampil realtime, data MPU masuk log &amp; ekspor"],
-       ["T-9", "Isi dimensi/lebar lintasan/titik awal lalu Preview",
-        "Kanvas &amp; daftar langkah &quot;maju/belok&quot; sesuai &amp; berubah realtime"],
-       ["T-10", "Ketuk kolom input lalu tekan keypad angka",
+       ["T-9", "Isi dimensi/lebar lintasan/titik awal",
+        "Kanvas &amp; antrean perintah berubah realtime"],
+       ["T-10", "Sentuh kolom input lalu pakai papan angka",
         "Nilai kolom terisi tanpa keyboard fisik; preview ikut ter-update"],
-       ["T-11", "Ganti titik awal (menu / klik kanvas)",
-        "Jalur &amp; arah belok pertama (DIR) berubah sesuai sudut awal"],
-       ["T-12", "Kirim misi dgn kecepatan berbeda",
-        "Paket memuat SPD/LW/DIR; estimasi waktu menyesuaikan kecepatan"],
-       ["T-13", "Misi berjalan (tanpa serial USB)",
-        "Panel MPU tampil heading dari radio (sumber &quot;NRF&quot;) &amp; masuk log"]],
+       ["T-11", "Ganti titik awal (menu / sentuh kanvas)",
+        "Jalur &amp; arah belok pertama berubah sesuai sudut awal"],
+       ["T-12", "Kirim FW / CW / CCW dari halaman MANUAL",
+        "Satu paket terkirim; status ROBOT BERGERAK lalu SELESAI setelah FIN"],
+       ["T-13", "Isi CW = 999 pada papan angka",
+        "Ditolak dengan pesan &quot;nilai harus 1&ndash;180 derajat&quot;"],
+       ["T-14", "Tekan STOP saat antrean berjalan",
+        "STOP:0 terkirim, status DIBATALKAN, sisa antrean tidak dikirim"],
+       ["T-15", "Robot tidak membalas ON dalam 1 detik",
+        "Status KIRIM ULANG; perintah dikirim ulang hingga 5 percobaan"],
+       ["T-16", "Jalankan pada layar beresolusi berbeda",
+        "Jendela mengikuti ukuran layar; faktor skala tampil di halaman SISTEM"]],
       [1.4 * cm, 6.6 * cm, 7 * cm])
 
 # ===================================================================== 7
@@ -425,19 +594,28 @@ h2("7.2 Menjalankan")
 p("Cukup jalankan satu berkas entry point <b>receiverArduino.py</b>; GUI, "
   "telemetri, dan logging berjalan otomatis:")
 code("cd Master Code/Transmitter\n"
-     "python receiverArduino.py          # buka GUI (default)\n"
-     "python receiverArduino.py --cli    # mode teks lama (opsional)")
+     "python receiverArduino.py             # GUI layar penuh (layar sentuh 7\")\n"
+     "python receiverArduino.py --windowed  # GUI jendela 800x480 (uji di PC)\n"
+     "python receiverArduino.py --cli       # mode teks (opsional)")
+p("Pada mode layar penuh, tombol <b>Escape</b> atau <b>F11</b> mengembalikan tampilan ke "
+  "mode jendela &mdash; berguna saat pengembangan di PC. Tombol yang sama tersedia pada "
+  "halaman SISTEM.")
 h2("7.3 Berkas Terkait")
 table(["Berkas", "Keterangan"],
       [["receiverArduino.py",
-        "ENTRY POINT — jalankan ini -&gt; GUI (opsi --cli utk mode teks lama)"],
-       ["feeder_gui.py", "Aplikasi GUI (CustomTkinter)"],
+        "ENTRY POINT — jalankan ini -&gt; GUI (opsi --windowed / --cli)"],
+       ["feeder_gui.py",
+        "Aplikasi GUI (CustomTkinter) — halaman bergaya ATM, mengikuti ukuran layar"],
        ["feeder_core.py",
-        "Backend: RadioLink, MissionEstimator, ActivityLogger, MPUSerialReader"],
-       ["capture_gui.py", "Skrip pengambil screenshot GUI untuk dokumentasi"],
+        "Backend: RobotCommand, RadioLink, CommandRunner, path planner, "
+        "ActivityLogger, MPUSerialReader"],
+       ["capture_gui.py", "Skrip pengambil screenshot tiap halaman GUI untuk dokumentasi"],
        ["build_docs_pdf.py", "Generator dokumen PDF ini"],
        ["Robot/New/Finalnew/Finalnew.ino",
-        "Firmware robot (ESP32) — diperbarui: parse SPD/LW/DIR + belok berselang-seling"],
+        "Firmware robot (ESP32) — ditulis ulang sebagai eksekutor perintah "
+        "FW/CW/CCW/STOP yang membalas ON &amp; FIN"],
+       ["Robot/New/Finalnew/Dokumen Spesifikasi Teknis_Skripsi.docx",
+        "Acuan perilaku robot &amp; protokol komunikasi"],
        ["Test Part/MPU Test/mpu/mpu.ino", "Sketsa sumber data MPU6050 via serial"]],
       [6 * cm, 9 * cm])
 
@@ -482,22 +660,33 @@ h1("8. Kesimpulan & Iterasi Berikutnya")
 p("Prototipe GUI berhasil memenuhi seluruh kebutuhan fungsional sesuai lingkup "
   "iterasi ini, dengan pemisahan arsitektur yang bersih dan mode simulasi yang "
   "mempermudah evaluasi. <b>Iterasi ini</b> &mdash; menindaklanjuti umpan balik pembimbing "
-  "&mdash; menambahkan <b>perencanaan jalur</b> (dimensi + titik awal + lebar lintasan + "
-  "kecepatan -&gt; daftar langkah maju/belok), <b>keypad layar</b> untuk operasi tanpa "
-  "keyboard, <b>preview jalur</b> point-and-click, protokol misi diperluas, "
-  "<b>perbaikan pola belok</b> agar sapuan menutupi seluruh tambak, serta "
-  "<b>telemetri MPU 2 arah</b> lewat radio (half-duplex &quot;gantian&quot;) sehingga heading "
-  "terbaca nyata saat robot berlayar. Sesuai Prototyping Model, keterbatasan yang tersisa "
-  "menjadi rencana iterasi selanjutnya:")
+  "&mdash; menghasilkan empat perubahan pokok:")
 bullets([
-    "Memperluas <b>isi telemetri balik</b> (status komponen, throttle asli, baterai) di "
-    "atas jalur 2 arah yang sudah ada.",
+    "<b>Tampilan mengikuti ukuran layar perangkat</b> dan dirancang ulang bergaya mesin "
+    "ATM untuk layar sentuh 7 inci: enam halaman bertombol besar, tombol STOP permanen, "
+    "dan papan angka layar penuh &mdash; <b>tanpa menghilangkan satu pun fitur</b>.",
+    "<b>Perilaku robot mengikuti Dokumen Spesifikasi Teknis</b>: protokol Request-Response "
+    "&quot;[Moves]:[Dist]&quot; dengan sinyal balik ON dan FIN, lengkap dengan pengiriman "
+    "ulang otomatis bila ON tidak diterima dalam 1 detik.",
+    "<b>Pola jalur berpindah ke Pengendali Utama.</b> Robot kini menjadi eksekutor satu "
+    "perintah; kemajuan misi yang ditampilkan adalah konfirmasi nyata dari robot, bukan "
+    "perkiraan berbasis penghitung waktu.",
+    "<b>Kendali manual FW / CW / CCW</b> melengkapi STOP yang sudah ada, dengan validasi "
+    "rentang sesuai tabel perintah.",
+])
+p("Sebagai efek samping yang menguntungkan, belokan kini <b>ditutup memakai umpan balik "
+  "sudut yaw MPU</b> (bukan durasi tetap), sehingga rencana iterasi sebelumnya soal "
+  "penghapusan kalibrasi TURN_90_MS sudah terpenuhi. Sesuai Prototyping Model, "
+  "keterbatasan yang tersisa menjadi rencana iterasi selanjutnya:")
+bullets([
     "Memasang <b>sensor RPM (hall/encoder)</b> untuk mengganti estimasi dengan data ukur.",
-    "Menambah perintah firmware untuk <b>kontrol komponen individual</b> (motor kiri/kanan, MPU).",
-    "Belok berbasis <b>sudut yaw MPU</b> (bukan durasi), agar belokan presisi tanpa "
-    "kalibrasi TURN_90_MS yang rawan.",
-    "Mendukung <b>path waypoint bebas</b> (klik banyak titik) selain sapuan persegi.",
-    "Kalibrasi konstanta (ROBOT_SPEED_MPS, TURN_90_MS, KV) pada pengujian air.",
+    "Menambah <b>odometri</b> agar jarak FW tidak lagi diturunkan dari waktu tempuh, "
+    "sehingga tahan terhadap arus air.",
+    "Memperluas <b>isi sinyal balik</b> (status komponen, throttle asli, tegangan baterai) "
+    "di atas jalur 2 arah yang sudah ada.",
+    "Menambah perintah untuk <b>kontrol komponen individual</b> (motor kiri/kanan, MPU).",
+    "Mendukung <b>path waypoint bebas</b> (sentuh banyak titik) selain sapuan persegi.",
+    "Kalibrasi konstanta (ROBOT_SPEED_MPS, TURN_RATE_DPS, KV) pada pengujian air.",
 ])
 
 story.append(Spacer(1, 12))

@@ -3,6 +3,11 @@
 Panel kontrol robot feeder akuatik. Jalankan **satu** berkas `receiverArduino.py`
 → GUI + telemetri + logging langsung aktif.
 
+GUI berjalan **layar penuh mengikuti ukuran layar perangkat**, dirancang untuk
+**layar sentuh 7 inci (800 × 480 px)** dengan tata letak bergaya mesin ATM:
+enam halaman bertombol besar, tombol STOP yang selalu terlihat, dan papan angka
+layar penuh sehingga bisa dioperasikan **tanpa keyboard maupun mouse**.
+
 ---
 
 ## 1. Kebutuhan
@@ -10,6 +15,7 @@ Panel kontrol robot feeder akuatik. Jalankan **satu** berkas `receiverArduino.py
 ### Perangkat keras
 - Raspberry Pi (3/4/5) dengan **Raspberry Pi OS Desktop** (butuh layar/desktop untuk GUI —
   langsung ke monitor HDMI **atau** lewat VNC).
+- **Layar sentuh 7 inci** (800 × 480) sebagai tampilan Pengendali Utama.
 - Modul **NRF24L01** terhubung ke pin SPI Pi (lihat tabel wiring di bawah).
 - *(Opsional untuk data MPU)* board **ESP32 berisi `mpu.ino`** dicolok via **USB** ke Pi.
 
@@ -87,24 +93,38 @@ pip install -r requirements.txt
 
 ```bash
 cd ~/feeder
-./run.sh                 # buka GUI (default)
+./run.sh                 # buka GUI layar penuh (default)
 # atau manual:
 source ~/feeder-venv/bin/activate
 python3 receiverArduino.py
 
-# mode teks lama (tanpa GUI):
-./run.sh --cli
+./run.sh --windowed      # jendela 800x480 (untuk uji/pengembangan)
+./run.sh --cli           # mode teks (tanpa GUI)
 ```
 
 Kalau `run.sh` belum bisa dieksekusi: `chmod +x run.sh` sekali saja.
+Saat layar penuh, tombol **Escape** atau **F11** mengembalikan ke mode jendela.
 
-### Di dalam GUI
-1. Isi **Panjang** & **Lebar** tambak (meter) → **KIRIM MISI**.
-2. Panel **Status Koneksi**: MODE = REAL, MODUL NRF = TERDETEKSI, ROBOT =
-   TERHUBUNG saat robot meng-ACK.
-3. **MPU6050**: isi port (mis. `/dev/ttyUSB0` atau `/dev/ttyACM0`) → **Hubungkan**.
-   Nyalakan **Rekam ke log** bila ingin data MPU ikut tersimpan.
-4. **Export CSV / TXT** untuk menyimpan log aktivitas.
+### Navigasi GUI
+
+Enam tombol di bilah bawah: **BERANDA · MISI · MANUAL · SENSOR · LOG · SISTEM**.
+Tombol **STOP** merah ada di bilah atas dan aktif dari halaman mana pun.
+
+1. **MISI** — sentuh kolom **Panjang** / **Lebar** (papan angka terbuka), atur
+   lebar lintasan, kecepatan, dan titik awal (bisa juga disentuh langsung di
+   peta). Panel kanan menampilkan preview jalur dan **daftar perintah** yang
+   akan dikirim. Tekan **KIRIM MISI KE ROBOT**.
+2. **BERANDA** — pantau status: perintah yang sedang dijalankan, kemajuan
+   antrean, dan perkiraan sisa waktu. Status berpindah `MENGIRIM PERINTAH →
+   ROBOT BERGERAK → SELESAI` mengikuti sinyal `ON` dan `FIN` dari robot.
+3. **MANUAL** — kirim satu perintah sendiri: **MAJU (FW, 10–200 cm)**,
+   **PUTAR KIRI (CCW, 1–180°)**, **PUTAR KANAN (CW, 1–180°)**. Pakai tombol
+   −/+ atau **ISI ANGKA**, lalu **KIRIM**.
+4. **SENSOR** — gauge baling-baling dan sudut MPU. Untuk uji bench lewat kabel,
+   isi port (mis. `/dev/ttyUSB0` atau `/dev/ttyACM0`) → **Hubungkan**. Saat
+   robot berlayar, sudut MPU datang sendiri lewat radio.
+5. **LOG** — seluruh siklus protokol terekam; **Export CSV / TXT** untuk menyimpan.
+6. **SISTEM** — saklar NRF / Heartbeat / Motor, mode simulasi, info layar, keluar.
 
 ---
 
@@ -141,7 +161,7 @@ Ganti `/home/pi/feeder/` sesuai lokasi foldermu.
 | ------ | ------ |
 | `receiverArduino.py` | **Entry point** — jalankan ini |
 | `feeder_gui.py` | Antarmuka GUI (CustomTkinter) |
-| `feeder_core.py` | Backend: radio, estimator, logger, MPU reader |
+| `feeder_core.py` | Backend: perintah FW/CW/CCW/STOP, radio, runner, logger, MPU reader |
 | `requirements.txt` | Daftar dependensi Python |
 | `setup_pi.sh` | Skrip instalasi otomatis (jalankan sekali) |
 | `run.sh` | Launcher (aktifkan venv + jalankan) |

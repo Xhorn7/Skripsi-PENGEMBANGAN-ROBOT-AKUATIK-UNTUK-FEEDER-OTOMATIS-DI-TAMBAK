@@ -1,9 +1,12 @@
 """
-capture_gui.py — Jalankan GUI dalam kondisi 'hidup' lalu SCREENSHOT ke PNG.
+capture_gui.py — Jalankan GUI dalam kondisi 'hidup' lalu SCREENSHOT tiap halaman.
 
-Dipakai untuk dokumentasi. Menyetel state contoh (misi 10x4 berjalan + MPU
-mode simulasi), membiarkan gauge beranimasi sebentar, lalu menyimpan
-gui_screenshot.png.
+Dipakai untuk dokumentasi. GUI dijalankan dalam mode JENDELA berukuran 800x480
+— persis resolusi layar sentuh 7 inci yang dipakai Pengendali Utama — supaya
+tangkapan layar mewakili tampilan di perangkat sebenarnya.
+
+Menyetel kondisi contoh (misi 10x4 berjalan + MPU simulasi), lalu menyimpan
+satu PNG per halaman.
 
 Jalankan:  python capture_gui.py
 Butuh:     customtkinter, pillow  (opsional pyrf24/pyserial utk data nyata)
@@ -15,38 +18,73 @@ from PIL import ImageGrab
 
 from feeder_gui import FeederGUI
 
-OUT = "gui_screenshot.png"
+# halaman -> berkas keluaran
+SHOTS = {
+    "BERANDA": "gui_screenshot.png",   # gambar utama dokumentasi
+    "MISI":    "gui_misi.png",
+    "MANUAL":  "gui_manual.png",
+    "SENSOR":  "gui_sensor.png",
+    "LOG":     "gui_log.png",
+    "SISTEM":  "gui_sistem.png",
+}
+
+KEYPAD_SHOT = "gui_keypad.png"
+
+
+def pump(app, seconds):
+    """Biarkan GUI menggambar & animasi berjalan selama beberapa detik."""
+    end = time.time() + seconds
+    while time.time() < end:
+        app.update()
+        time.sleep(0.03)
+
+
+def grab(app, path):
+    app.lift()
+    app.focus_force()
+    app.update_idletasks()
+    app.update()
+    time.sleep(0.35)
+    x, y = app.winfo_rootx(), app.winfo_rooty()
+    w, h = app.winfo_width(), app.winfo_height()
+    img = ImageGrab.grab(bbox=(x, y, x + w, y + h))
+    img.save(path)
+    print(f"OK -> {path}  ({img.width}x{img.height})")
 
 
 def main():
-    app = FeederGUI()
+    # jendela 800x480 = acuan layar sentuh 7 inci
+    app = FeederGUI(fullscreen=False)
     app.attributes("-topmost", True)
     app.update()
 
     # --- setel kondisi contoh ---
-    app.entry_panjang.delete(0, "end"); app.entry_panjang.insert(0, "10")
-    app.entry_lebar.delete(0, "end"); app.entry_lebar.insert(0, "4")
     app.mpu.start_sim()
-    app.sw_mpu_record.select(); app.mpu_record = True
-    app._on_send_mission()   # kirim misi -> gauge & fase mulai bergerak
+    app.sw_mpu_record.select()
+    app.mpu_record = True
+    app._refresh_plan()
+    pump(app, 0.6)
 
-    # biarkan animasi berjalan ~3 dtk supaya gauge/telemetri terisi
-    end = time.time() + 3.0
-    while time.time() < end:
-        app.update()
-        time.sleep(0.04)
+    # jalankan misi supaya status, gauge & progres terisi
+    app._on_send_mission()
+    pump(app, 2.5)
 
-    app.lift(); app.focus_force()
-    app.update_idletasks(); app.update()
-    time.sleep(0.3)
+    for page, path in SHOTS.items():
+        app.show_page(page)
+        pump(app, 0.8)
+        grab(app, path)
 
-    x, y = app.winfo_rootx(), app.winfo_rooty()
-    w, h = app.winfo_width(), app.winfo_height()
-    img = ImageGrab.grab(bbox=(x, y, x + w, y + h))
-    img.save(OUT)
-    print(f"OK -> {OUT}  ({img.width}x{img.height})")
+    # papan angka (lapisan penuh) — input tanpa keyboard di layar sentuh
+    from feeder_core import MOVE_FW
+    app.show_page("MANUAL")
+    app._open_keypad_manual(MOVE_FW, "MAJU")
+    for ch in "150":
+        app._keypad_press(ch)
+    pump(app, 0.6)
+    grab(app, KEYPAD_SHOT)
+    app._close_keypad()
 
-    app.destroy()
+    app._on_close()
 
 
 if __name__ == "__main__":
