@@ -25,17 +25,17 @@ Protokol mengikuti **Dokumen Spesifikasi Teknis — Robot Akuatik untuk Tambak I
 
 - **Perencanaan jalur (path planning):** dari dimensi tambak + titik awal + lebar lintasan + kecepatan → daftar segmen *maju/belok* (pola *boustrophedon*/zigzag) → **antrean perintah** `FW`/`CW`/`CCW`.
 - **Preview jalur:** kanvas peta tambak + daftar perintah yang akan dikirim, sebelum misi dijalankan.
-- **Kendali manual:** input sendiri `FW` (10–200 cm), `CW` / `CCW` (1–180°), plus `STOP` darurat.
+- **Kendali manual:** maju diisi dalam **meter** (0,1–50 m) lalu dipecah otomatis jadi paket `FW` 10–200 cm; putar `CW` / `CCW` (1–180°), plus `STOP` darurat.
 - **GUI mengikuti ukuran layar:** dirancang untuk **layar sentuh 7 inci** (800 × 480) bergaya mesin ATM — enam halaman bertombol besar, tombol STOP selalu terlihat, papan angka layar penuh. Operasi penuh **tanpa keyboard fisik**.
 - **Request-Response dengan pengiriman ulang:** bila `ON [Moves]` tak diterima dalam 1 detik, perintah dikirim ulang (maks 5×).
 - **Heading-hold proporsional:** robot berjalan lurus dengan koreksi arah dari MPU6050 (Kp × error).
 - **Putaran closed-loop:** sudut `CW`/`CCW` ditutup memakai umpan balik yaw MPU — tanpa kalibrasi durasi belok.
 - **Zigzag menyapu penuh:** arah U-turn **berselang-seling** sehingga sapuan menutupi seluruh lebar tambak.
 - **Failsafe heartbeat:** robot berhenti otomatis bila sinyal Pengendali Utama hilang > 3 detik.
-- **Telemetri MPU 2 arah (radio):** robot mengirim balik roll/pitch/yaw lewat NRF — heading terbaca real **saat robot berlayar bebas**, bukan cuma saat tertambat kabel USB.
+- **Telemetri MPU 2 arah (radio):** robot mengirim balik roll/pitch/yaw lewat NRF — **tanpa port serial sama sekali**. Sudut mengalir di latar belakang selama heartbeat hidup; saklar **Log MPU** menyalakan pencatatannya.
 - **Telemetri estimasi:** RPM/kecepatan diperkirakan dari PWM perintah yang sedang berjalan (robot belum punya sensor RPM).
-- **Logging:** semua aktivitas tercatat, ekspor CSV/TXT.
-- **Mode simulasi:** GUI jalan tanpa hardware NRF. Robot tiruan ikut membalas `ON`/`FIN`, sehingga **seluruh siklus protokol** bisa diuji di PC.
+- **Logging:** semua aktivitas tercatat; saklar **auto-simpan TXT** menulis tiap baris ke `logs/log_feeder_*.txt` begitu terjadi (aman bila aplikasi/daya mati), selain ekspor CSV/TXT sekali jalan.
+- **Mode REAL/SIMULASI dapat dipindah:** aplikasi **selalu mulai di SIMULASI** (robot tiruan membalas `ON`/`FIN` + telemetri MPU), lalu operator memindahkannya ke NRF sungguhan lewat chip **MODE** di bilah atas, pemilih di halaman SISTEM, atau flag `--real`.
 
 ---
 
@@ -105,10 +105,12 @@ Master Code/
     Dokumentasi_Kode_Finalnew.*       Dokumentasi firmware
   Robot/Old/...                       Versi firmware lama
   Transmitter/
-    receiverArduino.py                ENTRY POINT (--windowed, --cli)
+    receiverArduino.py                ENTRY POINT (--windowed, --real, --cli)
     feeder_gui.py                     GUI CustomTkinter (6 halaman, gaya ATM)
-    feeder_core.py                    RobotCommand, RadioLink, CommandRunner,
-                                      path planner, logger, MPU reader
+    feeder_core.py                    RobotCommand, RadioLink (REAL/SIMULASI),
+                                      CommandRunner, path planner,
+                                      logger + auto-simpan, MPUMonitor
+    logs/                             Berkas auto-simpan TXT (dibuat otomatis)
     capture_gui.py                    Screenshot tiap halaman GUI
     build_docs_pdf.py                 Generator PDF dokumentasi SDLC
     build_code_docs_pdf.py            Generator PDF dokumentasi kode (md -> pdf)
@@ -130,15 +132,16 @@ Test Part/                            Sketsa uji (mis. MPU Test)
 
 ```bash
 cd "Master Code/Transmitter"
-pip install customtkinter pyserial          # di PC (mode simulasi)
+pip install customtkinter                   # cukup ini untuk mode simulasi
 # di Raspberry Pi tambahkan:  pip install pyrf24
 
-python receiverArduino.py                   # GUI layar penuh (layar sentuh 7")
+python receiverArduino.py                   # GUI layar penuh (mulai mode SIMULASI)
 python receiverArduino.py --windowed        # jendela 800x480 (uji di PC)
+python receiverArduino.py --real            # langsung memakai NRF sungguhan
 python receiverArduino.py --cli             # mode teks
 ```
 
-Di PC (tanpa NRF) GUI otomatis **mode simulasi**. Di Raspberry Pi (dengan `pyrf24`) memakai NRF asli — butuh sesi Desktop (HDMI/VNC), lihat `setup_pi.sh`. Saat layar penuh, **Escape** atau **F11** mengembalikan ke mode jendela.
+GUI **selalu terbuka di mode SIMULASI** — aman untuk latihan & demo. Pindah ke NRF sungguhan dengan menyentuh chip **MODE** di bilah atas, memilih **REAL** pada halaman SISTEM, atau menjalankan dengan `--real`; perpindahan ditolak selagi ada perintah berjalan. Kendali nyata butuh Raspberry Pi (`pyrf24`) dengan sesi Desktop (HDMI/VNC), lihat `setup_pi.sh`. Saat layar penuh, **Escape** atau **F11** mengembalikan ke mode jendela.
 
 ![Antarmuka GUI](Master%20Code/Transmitter/gui_screenshot.png)
 
@@ -189,7 +192,7 @@ python render_flowcharts.py      # Flowchart Images/*.png dari flowchart.md
 
 ## Status & Iterasi Berikutnya
 
-Sudah berjalan: perencanaan jalur + preview, antrean perintah `FW`/`CW`/`CCW`, kendali manual, protokol Request-Response dengan `ON`/`FIN` dan pengiriman ulang, heading-hold, putaran closed-loop yaw, failsafe, GUI layar sentuh 7", dan telemetri MPU 2 arah.
+Sudah berjalan: perencanaan jalur + preview, antrean perintah `FW`/`CW`/`CCW`, kendali manual bersatuan meter, protokol Request-Response dengan `ON`/`FIN` dan pengiriman ulang, heading-hold, putaran closed-loop yaw, failsafe, GUI layar sentuh 7", telemetri MPU 2 arah tanpa kabel, pemilihan mode REAL/SIMULASI, serta auto-simpan log TXT.
 
 > **Catatan:** protokol baru sudah diverifikasi penuh lewat **mode simulasi** (robot tiruan membalas `ON`/`FIN`); firmware **belum diuji di hardware nyata**.
 

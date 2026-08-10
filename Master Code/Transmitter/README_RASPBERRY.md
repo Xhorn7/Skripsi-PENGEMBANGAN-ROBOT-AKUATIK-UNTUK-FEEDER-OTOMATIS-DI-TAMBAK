@@ -17,12 +17,13 @@ layar penuh sehingga bisa dioperasikan **tanpa keyboard maupun mouse**.
   langsung ke monitor HDMI **atau** lewat VNC).
 - **Layar sentuh 7 inci** (800 × 480) sebagai tampilan Pengendali Utama.
 - Modul **NRF24L01** terhubung ke pin SPI Pi (lihat tabel wiring di bawah).
-- *(Opsional untuk data MPU)* board **ESP32 berisi `mpu.ino`** dicolok via **USB** ke Pi.
+- Sudut MPU6050 **tidak perlu kabel USB lagi** — robot mengirimkannya sendiri
+  lewat telemetri balik NRF.
 
 ### Perangkat lunak
 - Python 3 (sudah bawaan Raspberry Pi OS).
 - Paket sistem: `python3-tk` (untuk GUI), `python3-venv`.
-- Paket Python: `customtkinter`, `pyrf24`, `pyserial` (lihat `requirements.txt`).
+- Paket Python: `customtkinter`, `pyrf24` (lihat `requirements.txt`).
 
 ---
 
@@ -99,8 +100,15 @@ source ~/feeder-venv/bin/activate
 python3 receiverArduino.py
 
 ./run.sh --windowed      # jendela 800x480 (untuk uji/pengembangan)
+./run.sh --real          # langsung memakai NRF sungguhan
 ./run.sh --cli           # mode teks (tanpa GUI)
 ```
+
+> **Mode awal = SIMULASI.** Aplikasi selalu terbuka dengan **robot virtual**
+> supaya aman dipakai berlatih & demo tanpa menyalakan robot. Untuk mengendalikan
+> robot sungguhan, sentuh tombol **MODE** di bilah atas (atau pilih **REAL** pada
+> **SISTEM → MODE KERJA**, atau jalankan dengan `--real`). Perpindahan mode
+> ditolak selagi ada perintah berjalan — tekan **STOP** dulu.
 
 Kalau `run.sh` belum bisa dieksekusi: `chmod +x run.sh` sekali saja.
 Saat layar penuh, tombol **Escape** atau **F11** mengembalikan ke mode jendela.
@@ -117,14 +125,22 @@ Tombol **STOP** merah ada di bilah atas dan aktif dari halaman mana pun.
 2. **BERANDA** — pantau status: perintah yang sedang dijalankan, kemajuan
    antrean, dan perkiraan sisa waktu. Status berpindah `MENGIRIM PERINTAH →
    ROBOT BERGERAK → SELESAI` mengikuti sinyal `ON` dan `FIN` dari robot.
-3. **MANUAL** — kirim satu perintah sendiri: **MAJU (FW, 10–200 cm)**,
+3. **MANUAL** — kirim perintah sendiri: **MAJU dalam METER (0,1–50 m)**,
    **PUTAR KIRI (CCW, 1–180°)**, **PUTAR KANAN (CW, 1–180°)**. Pakai tombol
-   −/+ atau **ISI ANGKA**, lalu **KIRIM**.
-4. **SENSOR** — gauge baling-baling dan sudut MPU. Untuk uji bench lewat kabel,
-   isi port (mis. `/dev/ttyUSB0` atau `/dev/ttyACM0`) → **Hubungkan**. Saat
-   robot berlayar, sudut MPU datang sendiri lewat radio.
-5. **LOG** — seluruh siklus protokol terekam; **Export CSV / TXT** untuk menyimpan.
-6. **SISTEM** — saklar NRF / Heartbeat / Motor, mode simulasi, info layar, keluar.
+   −/+ atau **ISI ANGKA** (papan angka menerima pecahan, mis. `2.5`), lalu
+   **KIRIM**. Jarak meter otomatis dipecah menjadi beberapa paket `FW` 10–200 cm
+   sesuai protokol; jumlah paketnya diperlihatkan di bawah angka.
+4. **SENSOR** — gauge baling-baling dan sudut MPU. **Tidak ada pengaturan port:**
+   sudut MPU ikut telemetri NRF dan mengalir sendiri di latar belakang selama
+   heartbeat hidup. Saklar **Log MPU** menyalakan pencatatan sudut ke log
+   (satu baris per detik).
+5. **LOG** — seluruh siklus protokol terekam. Saklar **Auto-simpan TXT** membuat
+   berkas `logs/log_feeder_<tanggal>_<jam>.txt` dan menulis tiap baris begitu
+   terjadi, jadi catatan uji lapangan tetap utuh walau aplikasi ditutup paksa
+   atau Pi kehilangan daya. **Export CSV / TXT** tetap tersedia untuk simpan
+   sekali jalan.
+6. **SISTEM** — saklar NRF / Heartbeat / Motor, pemilih **MODE KERJA**
+   (SIMULASI/REAL), status log MPU & auto-simpan, info layar, keluar.
 
 ---
 
@@ -133,9 +149,11 @@ Tombol **STOP** merah ada di bilah atas dan aktif dari halaman mana pun.
 | Gejala | Penyebab / Solusi |
 | ------ | ----------------- |
 | GUI tak muncul, error `no display` | Jalankan dari sesi Desktop/VNC, bukan SSH polos. Untuk SSH pakai `export DISPLAY=:0` atau aktifkan VNC. |
-| Status MODE = SIMULASI padahal di Pi | pyrf24 gagal / SPI belum aktif / wiring salah. Cek `ls /dev/spidev*` harus ada. |
+| Ingin memakai NRF nyata | Mode awal memang SIMULASI. Sentuh tombol **MODE** di bilah atas, atau jalankan `./run.sh --real`. |
+| Tombol MODE menolak pindah ke REAL | pyrf24 gagal / SPI belum aktif / wiring salah — pesannya muncul di dialog & log. Cek `ls /dev/spidev*` harus ada. |
 | ROBOT = TERPUTUS terus | Robot belum menyala/listening, channel/address beda, atau NRF kurang daya (kapasitor 3.3V). |
-| MPU tak terbaca | Salah port. Cek dengan `ls /dev/ttyUSB* /dev/ttyACM*`; pastikan user di grup `dialout`. |
+| MPU kosong / "menunggu telemetri robot" | Robot belum mengirim telemetri. Pastikan **Heartbeat PING** menyala (halaman SISTEM), robot hidup, dan firmware mengirim `R=..;P=..;Y=..`. |
+| Auto-simpan berhenti sendiri | Berkas gagal ditulis (kartu SD penuh / read-only). Sebabnya tampil di samping saklar; perbaiki lalu nyalakan lagi. |
 | `ModuleNotFoundError: customtkinter` | venv belum diaktifkan / `pip install -r requirements.txt` belum jalan. |
 
 ---
@@ -161,8 +179,9 @@ Ganti `/home/pi/feeder/` sesuai lokasi foldermu.
 | ------ | ------ |
 | `receiverArduino.py` | **Entry point** — jalankan ini |
 | `feeder_gui.py` | Antarmuka GUI (CustomTkinter) |
-| `feeder_core.py` | Backend: perintah FW/CW/CCW/STOP, radio, runner, logger, MPU reader |
+| `feeder_core.py` | Backend: perintah FW/CW/CCW/STOP, radio (REAL/SIMULASI), runner, logger + auto-simpan, MPUMonitor |
 | `requirements.txt` | Daftar dependensi Python |
 | `setup_pi.sh` | Skrip instalasi otomatis (jalankan sekali) |
 | `run.sh` | Launcher (aktifkan venv + jalankan) |
 | `Dokumentasi_GUI_Feeder_SDLC.pdf` | Dokumentasi lengkap (metode SDLC) |
+| `logs/` | Berkas auto-simpan TXT (dibuat sendiri saat saklar dinyalakan) |

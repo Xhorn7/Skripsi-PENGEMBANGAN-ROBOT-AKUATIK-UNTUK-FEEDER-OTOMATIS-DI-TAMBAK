@@ -5,11 +5,11 @@ Dipakai untuk dokumentasi. GUI dijalankan dalam mode JENDELA berukuran 800x480
 — persis resolusi layar sentuh 7 inci yang dipakai Pengendali Utama — supaya
 tangkapan layar mewakili tampilan di perangkat sebenarnya.
 
-Menyetel kondisi contoh (misi 10x4 berjalan + MPU simulasi), lalu menyimpan
-satu PNG per halaman.
+Menyetel kondisi contoh (misi 10x4 berjalan, log MPU & auto-simpan TXT menyala),
+lalu menyimpan satu PNG per halaman.
 
 Jalankan:  python capture_gui.py
-Butuh:     customtkinter, pillow  (opsional pyrf24/pyserial utk data nyata)
+Butuh:     customtkinter, pillow  (opsional pyrf24 utk radio nyata)
 """
 
 import time
@@ -59,9 +59,13 @@ def main():
     app.update()
 
     # --- setel kondisi contoh ---
-    app.mpu.start_sim()
+    # MPU tidak lagi butuh port: sudutnya ikut telemetri NRF, cukup nyalakan
+    # tombol log-nya. Auto-simpan TXT juga dinyalakan supaya tangkapan layar
+    # halaman LOG memperlihatkan berkas tujuannya.
     app.sw_mpu_record.select()
-    app.mpu_record = True
+    app._on_mpu_record()
+    app.sw_autosave.select()
+    app._on_toggle_autosave()
     app._refresh_plan()
     pump(app, 0.6)
 
@@ -74,11 +78,12 @@ def main():
         pump(app, 0.8)
         grab(app, path)
 
-    # papan angka (lapisan penuh) — input tanpa keyboard di layar sentuh
+    # papan angka (lapisan penuh) — input tanpa keyboard di layar sentuh.
+    # MAJU kini bersatuan METER, jadi contohnya memakai angka pecahan.
     from feeder_core import MOVE_FW
     app.show_page("MANUAL")
     app._open_keypad_manual(MOVE_FW, "MAJU")
-    for ch in "150":
+    for ch in "2.5":
         app._keypad_press(ch)
     pump(app, 0.6)
     grab(app, KEYPAD_SHOT)
