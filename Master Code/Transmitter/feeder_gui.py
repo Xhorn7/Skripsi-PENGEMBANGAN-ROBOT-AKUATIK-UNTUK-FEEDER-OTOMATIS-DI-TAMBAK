@@ -3,7 +3,8 @@ feeder_gui.py  —  GUI Kontrol Robot Feeder Akuatik  (CustomTkinter)
 ====================================================================
 
 Antarmuka PENGENDALI UTAMA. Dijalankan di Raspberry Pi dengan layar sentuh
-7 inci, tapi otomatis MODE SIMULASI di PC tanpa NRF.
+7 inci. Aplikasi SELALU MULAI DI MODE SIMULASI (aman untuk demo & latihan);
+tombol MODE pada bilah status atas memindahkannya ke NRF sungguhan kapan saja.
 
 RANCANGAN TAMPILAN (revisi: gaya mesin ATM)
 -------------------------------------------
@@ -15,8 +16,9 @@ persis pola mesin ATM: satu layar = satu tugas, target sentuh lebar,
 tombol berhenti darurat selalu terlihat.
 
     +--------------------------------------------------+
-    |  judul        [MODE][NRF][ROBOT]      [ STOP ]   |  bilah status
-    +--------------------------------------------------+
+    |  judul       [MODE*][NRF][ROBOT]      [ STOP ]   |  bilah status
+    +--------------------------------------------------+     * bisa disentuh:
+                                                           REAL <-> SIMULASI
     |                                                  |
     |                  ISI HALAMAN                     |
     |                                                  |
@@ -27,24 +29,27 @@ tombol berhenti darurat selalu terlihat.
 Halaman:
     BERANDA -> ringkasan status + perintah yang sedang berjalan
     MISI    -> dimensi tambak, preview jalur, kirim antrean perintah
-    MANUAL  -> input manual FW / CW / CCW (+ STOP di bilah atas)
-    SENSOR  -> telemetri baling-baling (estimasi) & sudut MPU (real)
-    LOG     -> catatan aktivitas + ekspor CSV/TXT
-    SISTEM  -> kontrol komponen, mode simulasi, keluar aplikasi
+    MANUAL  -> maju dalam METER + putar kiri/kanan (+ STOP di bilah atas)
+    SENSOR  -> telemetri baling-baling (estimasi) & sudut MPU dari NRF (real),
+               plus tombol nyala/mati pencatatan MPU
+    LOG     -> catatan aktivitas, auto-simpan TXT, ekspor CSV/TXT
+    SISTEM  -> kontrol komponen, pilih mode REAL/SIMULASI, keluar aplikasi
 
 Papan angka muncul sebagai LAPISAN PENUH saat sebuah kolom disentuh, supaya
 halaman tetap lega tanpa kehilangan kemampuan input tanpa keyboard.
 
 Cara jalan:
     pip install customtkinter
-    python feeder_gui.py                 # fullscreen (layar perangkat)
+    python feeder_gui.py                 # fullscreen, mulai mode SIMULASI
     python feeder_gui.py --windowed      # jendela 800x480 untuk uji di PC
+    python feeder_gui.py --real          # langsung mencoba NRF sungguhan
 
 Arsitektur: GUI ini hanya presentasi; semua logika ada di feeder_core.py.
 """
 
 from __future__ import annotations
 
+import os
 import sys
 import threading
 import time
@@ -66,8 +71,7 @@ from feeder_core import (
     CoveragePlan,
     CORNER_LABEL,
     LogEvent,
-    MPUReading,
-    MPUSerialReader,
+    MPUMonitor,
     MOVE_CCW,
     MOVE_CW,
     MOVE_FW,
@@ -77,14 +81,21 @@ from feeder_core import (
     RunStatus,
     HEARTBEAT_INTERVAL_S,
     LANE_WIDTH_M,
+    LOG_DIR_NAME,
+    MANUAL_FW_MAX_M,
+    MANUAL_FW_MIN_M,
+    MANUAL_FW_STEP_M,
+    MPU_LOG_INTERVAL_S,
     ROBOT_SPEED_MPS,
     MOTOR_KV,
     BATTERY_V,
+    default_log_path,
     estimate_rpm,
     estimate_speed_mps,
     plan_command_queue,
     plan_coverage,
     queue_duration_s,
+    split_forward,
     throttle_fraction,
     FULL_PWM,
     STOP_PWM,
@@ -115,7 +126,11 @@ class FeederGUI(ctk.CTk):
     # SIKLUS HIDUP
     # ==================================================================
 
-    def __init__(self, fullscreen: bool = True):
+    def __init__(self, fullscreen: bool = True, simulation: bool = True):
+        """
+        simulation=True (default) -> aplikasi mulai dengan robot virtual.
+        Operator memindahkannya ke NRF sungguhan lewat tombol MODE.
+        """
         super().__init__()
 
         ctk.set_appearance_mode("dark")
@@ -136,6 +151,7 @@ class FeederGUI(ctk.CTk):
         self._log_shown = 0              # jumlah baris log yang sudah ditampilkan
         self.heartbeat_enabled = True
         self.motor_armed = True          # False = motor dimatikan (STOP terkirim)
+        self.want_simulation = simulation  # mode yang DIMINTA operator
         self._closing = False            # penanda jendela sedang ditutup
 
         # perencanaan jalur (path planning)
@@ -143,15 +159,15 @@ class FeederGUI(ctk.CTk):
         self.queue: list[RobotCommand] = []
         self.start_corner = "BL"         # titik awal robot (sudut tambak)
 
-        # nilai perintah manual (revisi: FW/CW/CCW bisa diinput sendiri)
-        self.manual_val = {MOVE_FW: 100, MOVE_CW: 90, MOVE_CCW: 90}
+        # Nilai perintah manual. MAJU dipegang dalam METER (satuan yang dipakai
+        # operator di lapangan); pemecahan ke paket FW 10-200 cm dikerjakan
+        # split_forward() saat tombol KIRIM ditekan.
+        self.manual_val: dict[str, float] = {MOVE_FW: 1.0, MOVE_CW: 90,
+                                             MOVE_CCW: 90}
 
-        # MPU (jalur serial USB terpisah dari NRF)
-        self.mpu = MPUSerialReader()
-        self.mpu_record = False          # rekam pembacaan MPU ke log
-        self._last_mpu_log = 0.0
-        self._default_port = ("COM11" if sys.platform.startswith("win")
-                              else "/dev/ttyUSB0")
+        # MPU: tidak lagi lewat port serial — sudutnya ikut telemetri NRF dan
+        # ditarik di latar belakang oleh MPUMonitor.
+        self.mpu = MPUMonitor(self.link, logger=self.logger)
 
         self._pages: dict[str, ctk.CTkFrame] = {}
         self._nav_buttons: dict[str, ctk.CTkButton] = {}
@@ -159,12 +175,15 @@ class FeederGUI(ctk.CTk):
 
         self._build_ui()
 
-        # init radio (real/sim) + heartbeat thread
-        self.link.begin()
+        # init radio + heartbeat thread. Default SIMULASI: robot sungguhan baru
+        # tersentuh setelah operator sendiri menekan tombol MODE.
+        self.link.begin(force_sim=self.want_simulation)
+        self._sync_mode_widgets()
         self._refresh_status_chips()
         self.logger.log("SISTEM", "GUI start — mode " +
-                        ("SIMULASI (tanpa NRF)" if self.link.simulation
-                         else "REAL (NRF aktif)"))
+                        ("SIMULASI (robot virtual)" if self.link.simulation
+                         else "REAL (NRF aktif)") +
+                        "; ganti lewat tombol MODE di bilah atas")
         self.logger.log("SISTEM",
                         f"Layar {self.screen_w}x{self.screen_h} px "
                         f"(skala tampilan {self.S:.2f}x dari acuan 800x480)")
@@ -270,14 +289,26 @@ class FeederGUI(ctk.CTk):
 
         self.chip_robot  = self._chip(bar, "ROBOT")
         self.chip_module = self._chip(bar, "NRF")
-        self.chip_mode   = self._chip(bar, "MODE")
+        # MODE bukan sekadar penanda: disentuh = pindah REAL <-> SIMULASI.
+        self.chip_mode   = self._chip(bar, "MODE  ⇄  sentuh",
+                                      command=self._on_toggle_mode)
 
-    def _chip(self, parent, title):
+    def _chip(self, parent, title, command=None):
+        """
+        Kotak status kecil di bilah atas. Bila diberi command, nilainya menjadi
+        TOMBOL (dipakai chip MODE untuk berpindah REAL/SIMULASI).
+        """
         cell = ctk.CTkFrame(parent, corner_radius=self.px(6))
         cell.pack(side="right", padx=self.px(4), pady=self.px(7))
         ctk.CTkLabel(cell, text=title, font=self.F(8),
                      text_color=COLOR_IDLE).pack(padx=self.px(9), pady=(self.px(3), 0))
-        val = ctk.CTkLabel(cell, text="—", font=self.F(10, True))
+        if command is not None:
+            val = ctk.CTkButton(cell, text="—", font=self.F(11, True),
+                                width=self.px(96), height=self.px(22),
+                                corner_radius=self.px(5), fg_color="#243442",
+                                hover_color="#2f4557", command=command)
+        else:
+            val = ctk.CTkLabel(cell, text="—", font=self.F(10, True))
         val.pack(padx=self.px(9), pady=(0, self.px(3)))
         return val
 
@@ -479,8 +510,8 @@ class FeederGUI(ctk.CTk):
         head.grid(row=0, column=0, sticky="ew", pady=(0, self.px(5)))
         ctk.CTkLabel(
             head,
-            text="KENDALI MANUAL   ·   satu perintah dikirim, robot membalas "
-                 "ON lalu FIN saat selesai",
+            text="KENDALI MANUAL   ·   MAJU diisi dalam METER, otomatis dipecah "
+                 "jadi paket FW 10–200 cm   ·   robot membalas ON lalu FIN",
             font=self.F(11, True)).pack(pady=self.px(7))
 
         body = ctk.CTkFrame(pg, fg_color="transparent")
@@ -497,10 +528,44 @@ class FeederGUI(ctk.CTk):
             MOVE_CW:  self._manual_card(body, 2, MOVE_CW, "PUTAR KANAN", "↻",
                                         "#3498db", "#2c81ba"),
         }
+        self._update_manual_card(MOVE_FW)
         return pg
 
-    def _manual_card(self, parent, col, move, title, icon, color, hover):
+    # ---- satuan antarmuka kartu MANUAL -------------------------------
+    #
+    # MAJU memakai METER (yang dipikirkan operator saat berdiri di tepi
+    # tambak), sedangkan PUTAR tetap derajat sesuai protokol. Konversi meter ->
+    # paket FW dilakukan saat pengiriman, bukan disimpan.
+
+    def _manual_range(self, move) -> tuple[float, float, str]:
+        if move == MOVE_FW:
+            return MANUAL_FW_MIN_M, MANUAL_FW_MAX_M, "meter"
         lo, hi, unit = MOVE_RANGE[move]
+        return float(lo), float(hi), unit
+
+    def _manual_text(self, move) -> str:
+        v = self.manual_val[move]
+        return f"{v:.1f}" if move == MOVE_FW else f"{int(v)}"
+
+    def _update_manual_card(self, move):
+        """Segarkan angka besar + keterangan pemecahan paket pada satu kartu."""
+        card = self.manual_cards[move]
+        card["val"].configure(text=self._manual_text(move))
+        hint = card.get("hint")
+        if hint is None:
+            return
+        cmds = split_forward(self.manual_val[move])
+        if not cmds:
+            hint.configure(text=f"minimal {MANUAL_FW_MIN_M:g} m", text_color=COLOR_BAD)
+        else:
+            hint.configure(
+                text=(f"→ {len(cmds)} paket  ·  "
+                      f"{cmds[0].encode().decode()}"
+                      + (f" ×{len(cmds)}" if len(cmds) > 1 else "")),
+                text_color=COLOR_IDLE)
+
+    def _manual_card(self, parent, col, move, title, icon, color, hover):
+        lo, hi, unit = self._manual_range(move)
         card = ctk.CTkFrame(parent, corner_radius=self.px(12))
         card.grid(row=0, column=col, sticky="nsew", padx=self.px(5))
         card.grid_columnconfigure(0, weight=1)
@@ -520,26 +585,34 @@ class FeederGUI(ctk.CTk):
 
         ctk.CTkLabel(card, text=f"{icon}  {title}", font=self.F(13, True)).pack(
             pady=(self.px(8), 0))
-        ctk.CTkLabel(card, text=f"{move}  ·  {lo}–{hi} {unit}", font=self.F(9),
+        ctk.CTkLabel(card, text=f"{move}  ·  {lo:g}–{hi:g} {unit}", font=self.F(9),
                      text_color=COLOR_IDLE).pack(pady=(0, self.px(2)))
 
-        val = ctk.CTkLabel(card, text=str(self.manual_val[move]),
+        val = ctk.CTkLabel(card, text=self._manual_text(move),
                            font=self.F(32, True), text_color=color)
         val.pack()
         ctk.CTkLabel(card, text=unit, font=self.F(9),
-                     text_color=COLOR_IDLE).pack(pady=(0, self.px(4)))
+                     text_color=COLOR_IDLE).pack(pady=(0, self.px(2)))
+
+        # Khusus MAJU: perlihatkan jadi berapa paket FW jarak itu dipecah,
+        # supaya operator tahu persis apa yang dikirim ke robot.
+        hint = None
+        if move == MOVE_FW:
+            hint = ctk.CTkLabel(card, text="—", font=self.F(9),
+                                text_color=COLOR_IDLE)
+            hint.pack(pady=(0, self.px(2)))
 
         # pengatur cepat -/+
         step_row = ctk.CTkFrame(card, fg_color="transparent")
         step_row.pack(pady=(0, self.px(4)))
-        step = 10 if move == MOVE_FW else 15
+        step = MANUAL_FW_STEP_M if move == MOVE_FW else 15
         for txt, delta in (("−", -step), ("+", step)):
             ctk.CTkButton(step_row, text=txt, width=self.px(50),
                           height=self.px(36), font=self.F(17, True),
                           fg_color="#34495e", hover_color="#3f5c78",
                           command=lambda m=move, d=delta: self._manual_step(m, d)
                           ).pack(side="left", padx=self.px(5))
-        return val
+        return {"val": val, "hint": hint}
 
     # ==================================================================
     # HALAMAN 4 — SENSOR (telemetri baling-baling + MPU)
@@ -562,32 +635,24 @@ class FeederGUI(ctk.CTk):
         self.gauge_left  = self._gauge(top, 0, "KIRI")
         self.gauge_right = self._gauge(top, 1, "KANAN")
 
-        # --- MPU (real) ---
+        # --- MPU (real, lewat telemetri NRF — tanpa port serial) ---
         bot = ctk.CTkFrame(pg, corner_radius=self.px(10))
         bot.grid(row=1, column=0, sticky="nsew")
         bot.grid_columnconfigure((0, 1, 2), weight=1)
-        ctk.CTkLabel(bot, text="SENSOR MPU  ·  data REAL  —  via NRF saat "
-                               "berlayar, atau Serial USB saat uji bench",
+        ctk.CTkLabel(bot, text="SENSOR MPU  ·  data REAL dari robot  —  "
+                               "dikirim sendiri lewat NRF, tanpa kabel/port",
                      font=self.F(10, True)).grid(row=0, column=0, columnspan=3,
                                                  pady=(self.px(6), self.px(2)))
 
         ctrl = ctk.CTkFrame(bot, fg_color="transparent")
         ctrl.grid(row=1, column=0, columnspan=3, sticky="ew",
                   padx=self.px(12), pady=self.px(3))
-        ctk.CTkLabel(ctrl, text="Port:", font=self.F(10)).pack(side="left")
-        self.entry_mpu_port = ctk.CTkEntry(ctrl, width=self.px(110),
-                                           height=self.px(30), font=self.F(10))
-        self.entry_mpu_port.insert(0, self._default_port)
-        self.entry_mpu_port.pack(side="left", padx=self.px(5))
-        for txt, cmd, col in (("Hubungkan", self._on_mpu_connect, None),
-                              ("Simulasi", self._on_mpu_sim, COLOR_WARN),
-                              ("Putus", self._on_mpu_disconnect, COLOR_IDLE)):
-            ctk.CTkButton(ctrl, text=txt, width=self.px(80), height=self.px(30),
-                          font=self.F(10), fg_color=col, command=cmd).pack(
-                side="left", padx=self.px(3))
-        self.sw_mpu_record = ctk.CTkSwitch(ctrl, text="Rekam ke log",
-                                           font=self.F(10),
-                                           command=self._on_mpu_record)
+        ctk.CTkLabel(ctrl, text="Sudut mengalir di latar belakang selama "
+                                "heartbeat hidup.", font=self.F(10),
+                     text_color=COLOR_IDLE).pack(side="left")
+        self.sw_mpu_record = ctk.CTkSwitch(
+            ctrl, text=f"Log MPU (tiap {MPU_LOG_INTERVAL_S:g} s)",
+            font=self.F(10), command=self._on_mpu_record)
         self.sw_mpu_record.pack(side="right")
 
         self.mpu_tiles = {
@@ -637,12 +702,12 @@ class FeederGUI(ctk.CTk):
 
     def _build_page_log(self):
         pg = ctk.CTkFrame(self.page_area, corner_radius=self.px(12))
-        pg.grid_rowconfigure(1, weight=1)
+        pg.grid_rowconfigure(2, weight=1)
         pg.grid_columnconfigure(0, weight=1)
 
         head = ctk.CTkFrame(pg, fg_color="transparent")
         head.grid(row=0, column=0, sticky="ew", padx=self.px(10),
-                  pady=self.px(8))
+                  pady=(self.px(8), self.px(2)))
         ctk.CTkLabel(head, text="LOG AKTIVITAS", font=self.F(13, True)).pack(
             side="left")
         for txt, cmd, col in (("Clear", self._clear_log, COLOR_IDLE),
@@ -652,8 +717,22 @@ class FeederGUI(ctk.CTk):
                           font=self.F(11), fg_color=col, command=cmd).pack(
                 side="right", padx=self.px(4))
 
+        # --- auto-simpan: tiap baris langsung ditulis ke berkas TXT ---
+        auto = ctk.CTkFrame(pg, fg_color="transparent")
+        auto.grid(row=1, column=0, sticky="ew", padx=self.px(10),
+                  pady=(0, self.px(4)))
+        self.sw_autosave = ctk.CTkSwitch(auto, text="Auto-simpan TXT",
+                                         font=self.F(11),
+                                         command=self._on_toggle_autosave)
+        self.sw_autosave.pack(side="left")
+        self.lbl_autosave = ctk.CTkLabel(
+            auto, text="nonaktif — catatan hanya tersimpan di memori",
+            font=self.F(9), text_color=COLOR_IDLE, anchor="w")
+        self.lbl_autosave.pack(side="left", padx=self.px(10), fill="x",
+                               expand=True)
+
         self.log_box = ctk.CTkTextbox(pg, font=("Consolas", self.px(10)))
-        self.log_box.grid(row=1, column=0, sticky="nsew",
+        self.log_box.grid(row=2, column=0, sticky="nsew",
                           padx=self.px(10), pady=(0, self.px(10)))
         self.log_box.configure(state="disabled")
         return pg
@@ -687,14 +766,21 @@ class FeederGUI(ctk.CTk):
         self._component(comp, "mright", "Motor Kanan", False)
         self._component(comp, "mpu", "MPU (heading)", False)
 
-        # --- simulasi + keluar ---
+        # --- mode kerja + keluar ---
         side = ctk.CTkFrame(pg, corner_radius=self.px(12))
         side.grid(row=0, column=1, sticky="nsew", padx=(self.px(5), 0))
-        ctk.CTkLabel(side, text="MODE SIMULASI", font=self.F(13, True)).pack(
+        ctk.CTkLabel(side, text="MODE KERJA", font=self.F(13, True)).pack(
             pady=(self.px(10), 0))
-        ctk.CTkLabel(side, text="hanya berpengaruh saat NRF tidak tersedia",
+        ctk.CTkLabel(side, text="SIMULASI = robot virtual (default, aman) · "
+                                "REAL = kirim ke NRF24",
                      font=self.F(9), text_color=COLOR_IDLE).pack(
-            pady=(0, self.px(8)))
+            pady=(0, self.px(6)))
+        self.seg_mode = ctk.CTkSegmentedButton(
+            side, values=["SIMULASI", "REAL"], font=self.F(11, True),
+            height=self.px(36), command=self._on_mode_segment)
+        self.seg_mode.set("SIMULASI")
+        self.seg_mode.pack(fill="x", padx=self.px(14), pady=(0, self.px(6)))
+
         self.sw_sim_online = ctk.CTkSwitch(side, text="Robot virtual online (ACK)",
                                            font=self.F(11),
                                            command=self._on_sim_toggle)
@@ -807,12 +893,13 @@ class FeederGUI(ctk.CTk):
         return "break"
 
     def _open_keypad_manual(self, move, title):
-        """Papan angka untuk nilai perintah manual FW/CW/CCW."""
+        """Papan angka untuk nilai perintah manual: meter (FW) / derajat."""
         self._keypad_target = None
         self._keypad_move = move
-        lo, hi, unit = MOVE_RANGE[move]
-        self._show_keypad(f"{title}  ({move})", f"rentang sah {lo}–{hi} {unit}",
-                          str(self.manual_val[move]))
+        lo, hi, unit = self._manual_range(move)
+        self._show_keypad(f"{title}  ({move})",
+                          f"rentang sah {lo:g}–{hi:g} {unit}",
+                          self._manual_text(move))
 
     def _close_keypad(self):
         self.keypad.place_forget()
@@ -828,8 +915,10 @@ class FeederGUI(ctk.CTk):
                 self._keypad_buf = ""        # ketikan pertama mengganti nilai lama
                 self._keypad_fresh = False
             if ch == ".":
-                # perintah manual FW/CW/CCW selalu bilangan bulat
-                if self._keypad_move is None and "." not in self._keypad_buf:
+                # MAJU dalam meter boleh pecahan (mis. 2.5 m); PUTAR selalu
+                # bilangan bulat derajat sesuai protokol.
+                allow_dot = self._keypad_move in (None, MOVE_FW)
+                if allow_dot and "." not in self._keypad_buf:
                     self._keypad_buf += "."
             else:
                 self._keypad_buf += ch
@@ -840,17 +929,18 @@ class FeederGUI(ctk.CTk):
         text = self._keypad_buf.strip()
         if self._keypad_move is not None:
             move = self._keypad_move
-            lo, hi, unit = MOVE_RANGE[move]
+            lo, hi, unit = self._manual_range(move)
             try:
-                val = int(float(text or 0))
+                num = float(text or 0)
             except ValueError:
-                val = self.manual_val[move]
+                num = float(self.manual_val[move])
+            val = round(num, 1) if move == MOVE_FW else int(num)
             if not (lo <= val <= hi):
                 self.kp_hint.configure(
-                    text=f"nilai harus {lo}–{hi} {unit}", text_color=COLOR_BAD)
+                    text=f"nilai harus {lo:g}–{hi:g} {unit}", text_color=COLOR_BAD)
                 return
             self.manual_val[move] = val
-            self.manual_cards[move].configure(text=str(val))
+            self._update_manual_card(move)
         elif self._keypad_target is not None:
             self._keypad_target.delete(0, "end")
             self._keypad_target.insert(0, text)
@@ -903,24 +993,43 @@ class FeederGUI(ctk.CTk):
     # ==================================================================
 
     def _manual_step(self, move, delta):
-        lo, hi, _ = MOVE_RANGE[move]
-        self.manual_val[move] = max(lo, min(hi, self.manual_val[move] + delta))
-        self.manual_cards[move].configure(text=str(self.manual_val[move]))
+        lo, hi, _ = self._manual_range(move)
+        val = max(lo, min(hi, self.manual_val[move] + delta))
+        self.manual_val[move] = round(val, 1) if move == MOVE_FW else int(val)
+        self._update_manual_card(move)
 
     def _on_send_manual(self, move):
-        cmd = RobotCommand(move, self.manual_val[move])
-        ok, msg = cmd.validate()
-        if not ok:
-            messagebox.showerror("Nilai di luar rentang", msg)
-            return
+        """
+        MAJU: jarak METER dipecah jadi antrean paket FW 10-200 cm.
+        PUTAR: satu paket CW/CCW sesuai derajat.
+        """
+        if move == MOVE_FW:
+            meters = float(self.manual_val[move])
+            cmds = split_forward(meters)
+            if not cmds:
+                messagebox.showerror(
+                    "Jarak terlalu pendek",
+                    f"Jarak maju minimal {MANUAL_FW_MIN_M:g} m "
+                    f"(paket FW terkecil 10 cm).")
+                return
+            human = (f"Maju {meters:g} m — {len(cmds)} paket "
+                     f"{cmds[0].encode().decode()}"
+                     + (f" ×{len(cmds)}" if len(cmds) > 1 else ""))
+        else:
+            cmd = RobotCommand(move, int(self.manual_val[move]))
+            ok, msg = cmd.validate()
+            if not ok:
+                messagebox.showerror("Nilai di luar rentang", msg)
+                return
+            cmds, human = [cmd], f"[{cmd.encode().decode()}] — {cmd.human()}"
+
         if not self._ready_to_move():
             return
-        started, msg = self.runner.run([cmd], label="MANUAL")
+        started, msg = self.runner.run(cmds, label="MANUAL")
         if not started:
             messagebox.showwarning("Belum bisa dikirim", msg)
             return
-        self.logger.log("MANUAL", f"Perintah manual [{cmd.encode().decode()}] "
-                                  f"— {cmd.human()}")
+        self.logger.log("MANUAL", f"Perintah manual {human}")
         self.show_page("BERANDA")
 
     def _on_stop(self):
@@ -1093,22 +1202,84 @@ class FeederGUI(ctk.CTk):
         self.logger.log("SIMULASI",
                         f"Robot virtual di-set {'ONLINE' if online else 'OFFLINE'}")
 
-    def _on_mpu_connect(self):
-        ok, msg = self.mpu.start_real(self.entry_mpu_port.get().strip())
-        self.logger.log("MPU", msg)
+    # ---- pindah mode REAL / SIMULASI --------------------------------
 
-    def _on_mpu_sim(self):
-        ok, msg = self.mpu.start_sim()
-        self.logger.log("MPU", msg)
+    def _on_toggle_mode(self):
+        """Tombol MODE di bilah atas: balik ke mode seberangnya."""
+        self._set_mode(simulation=not self.link.simulation)
 
-    def _on_mpu_disconnect(self):
-        self.mpu.stop()
-        self.logger.log("MPU", "MPU diputus")
+    def _on_mode_segment(self, value):
+        """Pemilih MODE KERJA di halaman SISTEM."""
+        self._set_mode(simulation=(value == "SIMULASI"))
+
+    def _set_mode(self, simulation: bool):
+        """
+        Pindah lawan bicara radio. Ditolak selagi ada perintah berjalan supaya
+        robot tidak ditinggalkan bergerak tanpa pengendali.
+        """
+        if simulation == self.link.simulation:
+            self._sync_mode_widgets()
+            return
+        if self.runner.is_busy():
+            messagebox.showwarning(
+                "Perintah sedang berjalan",
+                "Tekan STOP dulu sebelum berpindah mode REAL/SIMULASI.")
+            self._sync_mode_widgets()
+            return
+
+        ok, msg = self.link.set_mode(simulation)
+        self.want_simulation = self.link.simulation
+        self.logger.log("MODE", msg)
+        # sinkronkan lagi keadaan yang dipegang GUI ke radio yang baru
+        self.link.tx_enabled = bool(self.sw_nrf.get())          # type: ignore
+        self.link.set_sim_robot_reachable(bool(self.sw_sim_online.get()))
+        self._sync_mode_widgets()
+        if not ok:
+            messagebox.showwarning("Mode REAL tidak tersedia", msg)
+
+    def _sync_mode_widgets(self):
+        """Samakan tampilan tombol MODE (bilah atas) & pemilih di SISTEM."""
+        sim = self.link.simulation
+        text = "SIMULASI" if sim else "REAL"
+        color = COLOR_WARN if sim else COLOR_OK
+        self.chip_mode.configure(text=text, text_color=color)
+        if self.seg_mode.get() != text:
+            self.seg_mode.set(text)
+
+    # ---- MPU (telemetri NRF, tanpa port) ----------------------------
 
     def _on_mpu_record(self):
-        self.mpu_record = bool(self.sw_mpu_record.get())
-        self.logger.log("MPU", "Rekam MPU ke log "
-                               f"{'AKTIF' if self.mpu_record else 'nonaktif'}")
+        msg = self.mpu.set_logging(bool(self.sw_mpu_record.get()))
+        self.logger.log("MPU", msg)
+
+    # ---- auto-simpan log --------------------------------------------
+
+    def _on_toggle_autosave(self):
+        """
+        Nyalakan/matikan penulisan tiap baris log ke berkas TXT. Berkas dibuat
+        otomatis di folder logs/ (tanpa dialog — layar sentuh tanpa keyboard).
+        """
+        if not self.sw_autosave.get():
+            _, msg = self.logger.set_autosave(None)
+            self.logger.log("LOG", msg)
+            self.lbl_autosave.configure(
+                text="nonaktif — catatan hanya tersimpan di memori",
+                text_color=COLOR_IDLE)
+            return
+
+        ok, msg = self.logger.set_autosave(default_log_path())
+        self.logger.log("LOG", msg)
+        if not ok:
+            self.sw_autosave.deselect()
+            self.lbl_autosave.configure(text=msg, text_color=COLOR_BAD)
+            messagebox.showerror("Auto-simpan gagal", msg)
+            return
+        # Tampilkan nama berkasnya saja — path lengkap terlalu panjang untuk
+        # layar 7 inci (dan sudah tercatat utuh di baris log di bawahnya).
+        path = self.logger.autosave_path or ""
+        self.lbl_autosave.configure(
+            text=f"menulis ke {os.path.join(LOG_DIR_NAME, os.path.basename(path))}",
+            text_color=COLOR_OK)
 
     # ==================================================================
     # EKSPOR LOG
@@ -1161,13 +1332,24 @@ class FeederGUI(ctk.CTk):
         self._refresh_components()
         self._refresh_gauges()
         self._refresh_mpu()
+        self._refresh_autosave()
         self._drain_log()
         self.after(self.UI_TICK_MS, self._ui_tick)
 
+    def _refresh_autosave(self):
+        """
+        Auto-simpan bisa mati sendiri bila berkas gagal ditulis (mis. kartu SD
+        penuh / dicabut). Tarik keadaan sebenarnya dari logger supaya tombol
+        tidak menampilkan 'aktif' padahal tidak ada yang tersimpan.
+        """
+        if self.sw_autosave.get() and self.logger.autosave_path is None:
+            self.sw_autosave.deselect()
+            self.lbl_autosave.configure(
+                text=f"auto-simpan BERHENTI: {self.logger.autosave_error}",
+                text_color=COLOR_BAD)
+
     def _refresh_status_chips(self):
-        mode = "SIMULASI" if self.link.simulation else "REAL"
-        self.chip_mode.configure(
-            text=mode, text_color=COLOR_WARN if self.link.simulation else COLOR_OK)
+        self._sync_mode_widgets()
         self.chip_module.configure(
             text="ADA" if self.link.module_present else "TIDAK ADA",
             text_color=COLOR_OK if self.link.module_present else COLOR_BAD)
@@ -1225,12 +1407,15 @@ class FeederGUI(ctk.CTk):
         self.comp_leds["mright"].configure(
             text_color=COLOR_OK if rp > STOP_PWM else COLOR_IDLE)
         self.comp_leds["mpu"].configure(
-            text_color=COLOR_OK if self.link.get_telemetry() else COLOR_IDLE)
+            text_color=COLOR_OK if self.mpu.latest else COLOR_IDLE)
 
+        auto = self.logger.autosave_path
         self.lbl_sys_info.configure(
             text=(f"Layar   : {self.screen_w} x {self.screen_h} px\n"
                   f"Skala   : {self.S:.2f}x (acuan 800x480)\n"
                   f"Radio   : {'SIMULASI' if self.link.simulation else 'NRF24 nyata'}\n"
+                  f"Log MPU : {'AKTIF' if self.mpu.log_enabled else 'nonaktif'}\n"
+                  f"Auto-TXT: {'AKTIF' if auto else 'nonaktif'}\n"
                   f"Protokol: FW / CW / CCW / STOP  +  ON & FIN"))
 
     def _refresh_gauges(self):
@@ -1248,36 +1433,30 @@ class FeederGUI(ctk.CTk):
                  f"{estimate_speed_mps(pwm):.2f} m/s · PWM {pwm}µs")
 
     def _refresh_mpu(self):
-        r: MPUReading = self.mpu.latest
-        tel = self.link.get_telemetry()   # (roll, pitch, yaw) via NRF, atau None
-
-        if self.mpu.connected:
-            # Sumber SERIAL USB (uji bench, robot tertambat)
-            vals = (r.angle_x, r.angle_y, r.angle_z)
-            src = "SIMULASI" if self.mpu.simulation else self.mpu.port
-            info = (f"Gyro X={r.gyro_x:.1f} Y={r.gyro_y:.1f} Z={r.gyro_z:.1f}"
-                    f"   ·   sumber: SERIAL {src}")
-            cat = "MPU-DATA"
-        elif tel is not None:
-            # Sumber RADIO NRF (telemetri balik saat robot berlayar bebas)
-            vals = tel
-            info = "sumber: NRF (radio, real)"
-            cat = "MPU-RADIO"
-        else:
+        """
+        Tarik cuplikan MPU terbaru (dan catat bila log MPU menyala). Dipanggil
+        tiap tick di HALAMAN MANA PUN, jadi pencatatan tetap jalan walau
+        operator sedang membuka halaman lain.
+        """
+        sample = self.mpu.poll()
+        if sample is None:
             for t in self.mpu_tiles.values():
                 t.configure(text_color=COLOR_IDLE)
-            self.lbl_mpu_src.configure(text="status: TERPUTUS",
-                                       text_color=COLOR_IDLE)
+            self.lbl_mpu_src.configure(
+                text="menunggu telemetri robot — pastikan heartbeat & robot hidup",
+                text_color=COLOR_IDLE)
             return
 
-        for key, v in zip(("roll", "pitch", "yaw"), vals):
+        for key, v in zip(("roll", "pitch", "yaw"),
+                          (sample.roll, sample.pitch, sample.yaw)):
             self.mpu_tiles[key].configure(text=f"{v:.1f}°", text_color=COLOR_OK)
-        self.lbl_mpu_src.configure(text=info, text_color=COLOR_OK)
 
-        if self.mpu_record and (time.monotonic() - self._last_mpu_log) >= 1.0:
-            self._last_mpu_log = time.monotonic()
-            self.logger.log(cat, f"Roll={vals[0]:.1f} Pitch={vals[1]:.1f} "
-                                 f"Yaw={vals[2]:.1f}")
+        catat = (f"log AKTIF · {self.mpu.logged} baris tercatat"
+                 if self.mpu.log_enabled else "log MPU nonaktif")
+        self.lbl_mpu_src.configure(
+            text=f"sumber: NRF ({sample.source}) · {self.mpu.samples} cuplikan "
+                 f"· {catat}",
+            text_color=COLOR_OK)
 
     # ==================================================================
     # LOG VIEW
@@ -1303,10 +1482,14 @@ class FeederGUI(ctk.CTk):
         try:
             if self.runner.is_busy():
                 self.runner.abort()
-            self.mpu.stop()
+            self.mpu.set_logging(False)
+            if self.logger.autosave_path:
+                self.logger.log("SISTEM", "Aplikasi ditutup — log tersimpan di "
+                                          f"{self.logger.autosave_path}")
         finally:
             self.destroy()
 
 
 if __name__ == "__main__":
-    FeederGUI(fullscreen="--windowed" not in sys.argv).mainloop()
+    FeederGUI(fullscreen="--windowed" not in sys.argv,
+              simulation="--real" not in sys.argv).mainloop()

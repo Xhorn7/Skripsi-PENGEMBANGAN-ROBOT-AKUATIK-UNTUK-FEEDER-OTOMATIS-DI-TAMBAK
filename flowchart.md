@@ -17,8 +17,9 @@ flowchart TB
         A["Input Ukuran Tambak<br/>+ Titik Awal + Kecepatan"] --> P["Rencanakan Jalur<br/>maju / belok + preview"]
         P --> Q["Susun Antrean Perintah<br/>FW / CW / CCW"]
         Q --> R["CommandRunner<br/>kirim 1 perintah,<br/>tunggu balasan"]
-        M["Input Manual<br/>FW / CW / CCW / STOP"] --> R
+        M["Input Manual<br/>Maju (meter) / CW / CCW / STOP"] --> R
         T["Tampil Status + Heading<br/>dari sinyal balik"]
+        T --> L["Log aktivitas + sudut MPU<br/>auto-simpan TXT"]
     end
 
     subgraph ESP32["⚙️ ESP32 — Body Robot"]
@@ -29,7 +30,7 @@ flowchart TB
     end
 
     R == "perintah — addr 00001<br/>FW:200 · CW:90 · CCW:90 · STOP:0" ==> C
-    D -. "sinyal balik — addr 00002<br/>ON [Moves] · FIN [Moves]:[Dist]" .-> T
+    D -. "sinyal balik — addr 00002<br/>ON [Moves] · FIN [Moves]:[Dist] · R=;P=;Y=" .-> T
 ```
 
 > **Perubahan peran robot.** Pola zigzag kini disusun & dikemudikan Pengendali Utama; robot hanya eksekutor satu perintah. Mengubah pola jalur cukup di aplikasi, tanpa flash ulang ESP32.
@@ -43,14 +44,19 @@ Alur aplikasi GUI. Operasi penuh lewat **layar sentuh** (papan angka di layar), 
 ```mermaid
 flowchart TD
     START([▶ START GUI]) --> SCR["Ambil ukuran layar perangkat<br/>skala = min(W/800, H/480)"]
-    SCR --> INIT["Init RF24<br/>CE=24, CSN=0<br/>Ch=0x76, 250KBPS"]
-    INIT --> DET{NRF24<br/>Terdeteksi?}
-    DET -- Tidak --> SIM[Mode SIMULASI<br/>MockRadio]
-    DET -- Ya --> REAL[Mode REAL]
-    SIM --> HOME
-    REAL --> HOME[Halaman BERANDA]
+    SCR --> SIM["Mode awal SIMULASI<br/>MockRadio (robot virtual)"]
+    SIM --> HOME[Halaman BERANDA]
 
     HOME --> PICK{Operator<br/>pilih apa?}
+
+    PICK -- "Sentuh chip MODE" --> MODE{Minta mode<br/>REAL?}
+    MODE -- Ya --> TRY["set_mode: init RF24<br/>CE=24, CSN=0<br/>Ch=0x76, 250KBPS"]
+    TRY --> OK{NRF24<br/>terdeteksi?}
+    OK -- Ya --> REAL[Mode REAL<br/>perintah ke robot nyata]
+    OK -- Tidak --> BACK["Kembali ke SIMULASI<br/>+ tampilkan sebabnya"]
+    MODE -- Tidak --> SIM
+    REAL --> HOME
+    BACK --> HOME
 
     PICK -- MISI --> INPUT[/"Input via papan angka:<br/>Panjang, Lebar,<br/>Lebar lintasan, Kecepatan,<br/>Titik awal"/]
     INPUT --> PLAN["plan_coverage:<br/>hitung jalur zigzag<br/>+ daftar maju/belok"]
@@ -60,11 +66,13 @@ flowchart TD
     SENDBTN -- Belum --> INPUT
     SENDBTN -- Ya --> RUN
 
-    PICK -- MANUAL --> MAN[/"Pilih FW / CW / CCW<br/>+ isi nilai"/]
+    PICK -- MANUAL --> MAN[/"Maju (meter) atau<br/>CW / CCW (derajat)<br/>+ isi nilai"/]
     MAN --> VAL{Nilai dalam<br/>rentang sah?}
     VAL -- Tidak --> REJECT[Tolak + tampilkan<br/>rentang yang benar]
     REJECT --> MAN
-    VAL -- Ya --> RUN
+    VAL -- "Ya, maju" --> SPLITM["split_forward:<br/>meter → paket FW 10-200 cm"]
+    SPLITM --> RUN
+    VAL -- "Ya, putar" --> RUN
 
     RUN["CommandRunner.run(antrean)"] --> CYCLE[Siklus Request-Response<br/>per perintah - lihat diagram 4]
     CYCLE --> NEXT{Masih ada<br/>perintah?}
@@ -74,9 +82,14 @@ flowchart TD
 
     PICK -- STOP --> SSTOP["Kirim STOP:0 berulang<br/>batalkan sisa antrean"]
     SSTOP --> HOME
+
+    PICK -- "SENSOR / LOG" --> TOG["Saklar Log MPU<br/>& Auto-simpan TXT"]
+    TOG --> HOME
 ```
 
 > Tombol **STOP** ada di bilah atas sehingga dapat ditekan dari halaman mana pun, termasuk saat antrean sedang berjalan.
+>
+> **Mode awal selalu SIMULASI**; perpindahan ke REAL adalah keputusan sadar operator lewat chip **MODE** (atau flag `--real`), dan ditolak selagi ada perintah berjalan. Sementara itu sudut MPU mengalir sendiri dari telemetri NRF di latar belakang — **tanpa port serial** — dan saklar **Log MPU** / **Auto-simpan TXT** menentukan apakah ikut dicatat ke berkas.
 
 ---
 

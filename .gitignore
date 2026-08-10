@@ -23,3 +23,5 @@ desktop.ini
 
 # ===== dist =====
 dist/
+# ===== Log auto-simpan GUI Feeder =====
+Master Code/Transmitter/logs/

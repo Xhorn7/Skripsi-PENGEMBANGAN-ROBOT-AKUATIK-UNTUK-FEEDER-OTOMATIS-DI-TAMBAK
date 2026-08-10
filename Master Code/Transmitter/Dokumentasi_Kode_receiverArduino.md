@@ -16,10 +16,16 @@ Dokumen ini menjelaskan berkas **`receiverArduino.py`**, yaitu **satu-satunya ti
 | **GUI jendela** | `python receiverArduino.py --windowed` | Jendela 800×480 untuk pengembangan & uji di PC |
 | **CLI** | `python receiverArduino.py --cli` | Mode teks — uji cepat perintah tanpa layar sentuh |
 
+Ditambah satu saklar yang berlaku untuk semua mode: **`--real`**. Tanpa flag itu
+aplikasi **selalu mulai di mode SIMULASI** (robot virtual) — pilihan yang aman
+untuk latihan & demo — dan operator memindahkannya ke NRF sungguhan lewat tombol
+**MODE** di bilah atas GUI, pemilih **MODE KERJA** di halaman SISTEM, atau
+perintah `MODE real` di CLI.
+
 Filosofi desainnya: **logika inti tidak ditulis di sini**. Berkas ini hanya memilih mode lalu mendelegasikan pekerjaan ke modul lain:
 
 - **`feeder_gui.py`** — antarmuka grafis (kelas `FeederGUI`).
-- **`feeder_core.py`** — mesin di baliknya: `RobotCommand`, `RadioLink`, `CommandRunner`, path planner, `ActivityLogger`, `MPUSerialReader`.
+- **`feeder_core.py`** — mesin di baliknya: `RobotCommand`, `RadioLink`, `CommandRunner`, path planner, `ActivityLogger`, `MPUMonitor`.
 
 Dengan begitu `receiverArduino.py` tetap ringkas dan mudah dibaca sebagai peta seluruh sistem.
 
@@ -31,8 +37,8 @@ Tiga fungsi + satu *guard*:
 
 | Fungsi | Peran |
 |---|---|
-| `run_gui(fullscreen)` | Membuka panel kontrol grafis |
-| `run_cli()` | Menjalankan antarmuka teks |
+| `run_gui(fullscreen, simulation)` | Membuka panel kontrol grafis |
+| `run_cli(simulation)` | Menjalankan antarmuka teks |
 | `main()` | Memilih mode dari argumen baris perintah |
 | `if __name__ == "__main__"` | Titik eksekusi saat file dijalankan langsung |
 
@@ -44,10 +50,12 @@ Sangat sederhana. Bila argumen `--cli` atau `-c` ada, jalankan mode teks; jika t
 
 ```
 def main():
+    # Default SIMULASI; --real meminta NRF sungguhan sejak awal.
+    simulation = "--real" not in sys.argv
     if "--cli" in sys.argv or "-c" in sys.argv:
-        run_cli()
+        run_cli(simulation=simulation)
     else:
-        run_gui(fullscreen="--windowed" not in sys.argv)
+        run_gui(fullscreen="--windowed" not in sys.argv, simulation=simulation)
 ```
 
 ---
@@ -64,16 +72,16 @@ try:
 except ImportError as e:
     print("Gagal memuat GUI:", e)
     print("    pip install customtkinter          (wajib utk GUI)")
-    print("    pip install pyrf24 pyserial         (utk NRF & MPU nyata di Pi)")
+    print("    pip install pyrf24                 (utk NRF nyata di Pi)")
     print("    python receiverArduino.py --cli     (mode teks)")
     sys.exit(1)
 ```
 
-> **Catatan pemasangan (penting di Windows/PC dengan banyak Python):** pesan `customtkinter belum terpasang` muncul bila paket terpasang di interpreter Python yang **berbeda** dari yang menjalankan skrip. Pastikan memasang ke interpreter yang sama, mis. `& "C:\path\ke\python.exe" -m pip install customtkinter pyserial`. Di PC (tanpa NRF), `pyrf24` boleh dilewati — GUI otomatis masuk **mode simulasi**.
+> **Catatan pemasangan (penting di Windows/PC dengan banyak Python):** pesan `customtkinter belum terpasang` muncul bila paket terpasang di interpreter Python yang **berbeda** dari yang menjalankan skrip. Pastikan memasang ke interpreter yang sama, mis. `& "C:\path\ke\python.exe" -m pip install customtkinter`. Di PC (tanpa NRF), `pyrf24` boleh dilewati — GUI memang mulai di **mode simulasi**.
 
 **Tentang layar penuh.** GUI mengambil resolusi layar perangkat dan berjalan tanpa bilah judul, dirancang untuk layar sentuh 7 inci (800 × 480 px). Tombol **Escape** atau **F11** mengembalikannya ke mode jendela — berguna saat pengembangan di PC. Untuk langsung memulai dalam jendela, pakai `--windowed`.
 
-Mode GUI otomatis memakai **NRF asli** bila dijalankan di Raspberry Pi (pustaka `pyrf24` tersedia), dan **mode simulasi** bila tidak — sehingga panel tetap bisa didemokan di PC tanpa perangkat keras.
+**Tentang mode kerja.** GUI dibuka dengan `FeederGUI(fullscreen=..., simulation=...)`. Nilai bawaan `simulation=True` berarti panel **tidak pernah menyentuh radio nyata sampai operator memintanya** — perilaku yang disengaja supaya demo di ruang sidang atau latihan di darat tidak membuat robot bergerak. Menekan tombol **MODE** memanggil `RadioLink.set_mode()`, yang melepas radio lama, membersihkan sisa sinyal `ON`/`FIN` serta telemetri, lalu memasang lawan bicara baru. Bila mode **REAL** diminta padahal `pyrf24`/modul NRF tidak ada, koneksi kembali ke simulasi dan kegagalannya **dilaporkan lewat dialog & log** — bukan diam-diam. Perpindahan mode ditolak selagi ada perintah berjalan, supaya robot tidak ditinggalkan bergerak tanpa pengendali.
 
 ---
 
@@ -85,12 +93,13 @@ Berbeda dengan versi sebelumnya yang menulis ulang seluruh logika radio, mode te
 
 ```
 link = RadioLink()
-link.begin()                       # auto-fallback ke simulasi bila NRF tak ada
+link.begin(force_sim=simulation)   # default: robot virtual
 logger = ActivityLogger(on_new=lambda ev: print(f"  [{ev.category}] {ev.message}"))
 runner = CommandRunner(link, logger=logger)
+mpu    = MPUMonitor(link, logger=logger)
 ```
 
-`ActivityLogger` diberi *callback* yang langsung mencetak tiap kejadian, sehingga operator melihat siklus protokol berjalan secara langsung.
+`ActivityLogger` diberi *callback* yang langsung mencetak tiap kejadian, sehingga operator melihat siklus protokol berjalan secara langsung. Satu *thread* latar mengirim `PING` berkala dan memanggil `mpu.poll()` — sama seperti di GUI — sehingga sudut MPU tetap mengalir walau tidak ada perintah berjalan.
 
 > Parameter radio (**alamat `00001`, channel `0x76`, data rate `250KBPS`, PA `LOW`**) diatur di dalam `RadioLink` dan **harus identik** dengan firmware robot `Finalnew.ino`; jika berbeda, kedua modul tidak akan terhubung. Perhatikan pin CE/CSN di Raspberry (`24, 0`) berbeda dari ESP32 (`4, 5`) karena beda papan.
 
@@ -98,10 +107,14 @@ runner = CommandRunner(link, logger=logger)
 
 | Ketikan | Aksi |
 |---|---|
-| `FW <10-200>` | Maju sekian sentimeter |
+| `MAJU <0.1-50>` | Maju sekian **meter** — dipecah otomatis menjadi beberapa paket `FW` |
+| `FW <10-200>` | Satu paket maju, satuan sentimeter (setara paket protokol) |
 | `CW <1-180>` | Putar kanan sekian derajat |
 | `CCW <1-180>` | Putar kiri sekian derajat |
 | `MISI <p> <l>` | Susun sapuan zigzag tambak p × l meter, lalu jalankan seluruh antreannya |
+| `MODE <real\|sim>` | Pindah lawan bicara radio |
+| `MPU <on\|off>` | Nyalakan/matikan pencatatan sudut MPU dari telemetri NRF |
+| `SIMPAN <on\|off>` | Nyalakan/matikan auto-simpan log ke berkas TXT |
 | `STOP` | Berhenti darurat |
 | `KELUAR` | Kirim STOP lalu keluar |
 
@@ -180,8 +193,8 @@ Bila `ON` tidak datang dalam 1 detik, `CommandRunner` menganggap perintah gagal 
 | | `RadioLink` | Abstraksi NRF24 (`pyrf24`) + `MockRadio` (simulasi); merutekan `ON`/`FIN`/telemetri |
 | | `plan_coverage()` / `plan_command_queue()` | Tambak persegi + titik awal + lebar lintasan → segmen "maju/belok" → antrean perintah FW/CW/CCW |
 | | `CommandRunner` | Pelaksana Request-Response: kirim, tunggu `ON` (kirim ulang bila lewat 1 detik), tunggu `FIN`, lanjut |
-| | `ActivityLogger` | Pencatatan aktivitas berstempel waktu + ekspor CSV/TXT |
-| | `MPUSerialReader` | Baca data MPU6050 (roll/pitch/yaw) via serial USB |
+| | `ActivityLogger` | Pencatatan aktivitas berstempel waktu, ekspor CSV/TXT, dan **auto-simpan** tiap baris ke berkas TXT |
+| | `MPUMonitor` | Ambil sudut MPU (roll/pitch/yaw) dari telemetri NRF di latar belakang + catat ke log bila diminta |
 
 > **Perbedaan GUI vs CLI.** Keduanya memakai protokol dan komponen inti yang sama. GUI menambahkan: papan angka layar sentuh, input titik awal / lebar lintasan / kecepatan, preview jalur pada kanvas, gauge telemetri, panel sensor MPU, dan ekspor log. CLI hanya mengirim perintah dan mencetak kejadian.
 
@@ -197,6 +210,7 @@ Bila `ON` tidak datang dalam 1 detik, `CommandRunner` menganggap perintah gagal 
 cd "Master Code/Transmitter"
 python receiverArduino.py               # GUI layar penuh (layar sentuh 7")
 python receiverArduino.py --windowed    # GUI jendela 800x480 (uji di PC)
+python receiverArduino.py --real        # langsung memakai NRF sungguhan
 python receiverArduino.py --cli         # mode teks
 ```
 
@@ -205,10 +219,9 @@ python receiverArduino.py --cli         # mode teks
 | Paket | Untuk | Wajib di |
 |---|---|---|
 | `customtkinter` | framework GUI | GUI (PC & Pi) |
-| `pyserial` | baca MPU6050 via serial USB | GUI (opsional di PC) |
 | `pyrf24` | driver NRF24L01 | **hanya Raspberry Pi** (dilewati di Windows) |
 
-> Di **PC** cukup `pip install customtkinter pyserial` — NRF otomatis disimulasikan. Di **Raspberry Pi** tambahkan `pyrf24` untuk kendali radio nyata. Selalu pasang ke interpreter Python yang sama dengan yang menjalankan skrip.
+> Di **PC** cukup `pip install customtkinter` — mode SIMULASI tidak butuh apa pun selain itu. Di **Raspberry Pi** tambahkan `pyrf24` untuk kendali radio nyata. `pyserial` **tidak lagi dibutuhkan**: sudut MPU ikut telemetri NRF, bukan kabel USB. Selalu pasang ke interpreter Python yang sama dengan yang menjalankan skrip.
 
 ---
 

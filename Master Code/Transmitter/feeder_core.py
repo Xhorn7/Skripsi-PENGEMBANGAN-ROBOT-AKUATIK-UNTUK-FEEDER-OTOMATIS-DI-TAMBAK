@@ -13,8 +13,9 @@ Kelas & fungsi utama:
     1. RobotCommand    -> satu paket Sinyal Kendali "[Moves]:[Dist]" sesuai
                           "Dokumen Spesifikasi Teknis — Robot Akuatik untuk
                           Tambak Ikan" (FW / CW / CCW / STOP).
-    2. RadioLink       -> abstraksi NRF24 (pyrf24) + AUTO-FALLBACK ke MockRadio
-                          kalau dijalankan di PC tanpa pyrf24/NRF (mode SIMULASI).
+    2. RadioLink       -> abstraksi NRF24 (pyrf24) yang bisa DIPINDAH mode
+                          REAL <-> SIMULASI saat aplikasi berjalan
+                          (set_mode); mode SIMULASI memakai MockRadio.
                           Juga merutekan sinyal balik "ON [Moves]" & "FIN
                           [Moves]:[Dist]" serta telemetri MPU.
     3. plan_coverage / plan_command_queue
@@ -24,20 +25,22 @@ Kelas & fungsi utama:
     4. CommandRunner   -> pelaksana pola Request-Response: kirim perintah,
                           tunggu "ON" (kirim ulang bila lewat 1 detik), tunggu
                           "FIN", lanjut perintah berikutnya.
-    5. ActivityLogger  -> catat semua aktivitas + export ke CSV/TXT.
+    5. ActivityLogger  -> catat semua aktivitas, export ke CSV/TXT, dan
+                          AUTO-SIMPAN tiap baris ke berkas TXT (opsional).
 
 CATATAN KEJUJURAN TEKNIS:
     Nilai RPM & kecepatan pada gauge adalah ESTIMASI dari PWM throttle yang
     SEHARUSNYA dijalankan robot untuk perintah yang sedang berlangsung — bukan
     hasil ukur sensor RPM. Yang REAL/terukur: ACK radio, sinyal ON/FIN dari
-    robot, dan sudut MPU yang dikirim balik lewat telemetri.
+    robot, dan sudut MPU yang dikirim balik lewat telemetri NRF (tanpa kabel
+    serial — MPU tidak lagi butuh port USB).
 """
 
 from __future__ import annotations
 
 import csv
 import math
-import random
+import os
 import re
 import threading
 import time
@@ -112,6 +115,16 @@ MOVE_LABEL = {
     MOVE_CCW:  "Putar kiri",
     MOVE_STOP: "Berhenti",
 }
+
+# --- Satuan pada ANTARMUKA (bukan pada protokol) ---
+# Operator berpikir dalam METER saat memerintah "maju", sementara paket FW pada
+# protokol tetap sentimeter 10-200 cm. Jarak dalam meter dipecah otomatis oleh
+# split_forward() menjadi beberapa paket FW yang sah.
+MANUAL_FW_MIN_M = 0.1     # < 10 cm tidak bisa diperintahkan (batas bawah FW)
+MANUAL_FW_MAX_M = 50.0    # batas wajar sekali tekan (= 25 paket FW:200)
+MANUAL_FW_STEP_M = 0.5    # loncatan tombol -/+ pada kartu MANUAL
+
+MPU_LOG_INTERVAL_S = 1.0  # jarak antar-catatan saat log MPU dinyalakan
 
 ON_TIMEOUT_S   = 1.0    # batas tunggu "ON [Moves]" sebelum perintah dikirim ulang
 CMD_MAX_RETRY  = 5      # jumlah percobaan kirim ulang sebelum menyerah
@@ -249,9 +262,12 @@ class RadioLink:
         - open_tx_pipe, PA_LOW, 250KBPS, channel 0x76
         - radio.write() return True  => paket + AUTO-ACK diterima => ROBOT HIDUP
 
-    Kalau pyrf24 tidak tersedia (mis. di Windows) ATAU modul NRF gagal begin(),
-    otomatis pindah ke MODE SIMULASI memakai MockRadio, sehingga GUI tetap
-    bisa dikembangkan & didemokan tanpa hardware.
+    Dua mode, dan operator bisa BERPINDAH kapan saja lewat set_mode():
+        SIMULASI -> MockRadio (robot tiruan); dipakai sebagai DEFAULT aplikasi
+                    supaya demo & pengembangan aman tanpa hardware.
+        REAL     -> modul NRF24 sungguhan lewat pyrf24.
+    Bila mode REAL diminta tapi pyrf24/NRF tidak ada, koneksi otomatis kembali
+    ke SIMULASI dan set_mode() melaporkan kegagalannya (bukan diam-diam).
     """
 
     def __init__(self, address: bytes = b"00001",
@@ -266,6 +282,7 @@ class RadioLink:
         self.module_present = False     # modul NRF terdeteksi (begin OK)
         self.last_ack_ms: float = 0.0   # millis() terakhir robot meng-ACK
         self.tx_enabled = True          # gate: boleh mengirim atau tidak
+        self.last_error = ""            # alasan gagal masuk mode REAL
 
         # telemetri balik (roll, pitch, yaw) hasil poll terakhir
         self.telemetry_addr = TELEMETRY_ADDR
@@ -279,8 +296,16 @@ class RadioLink:
 
     # ---- lifecycle -------------------------------------------------
 
-    def begin(self) -> bool:
-        """Inisialisasi radio. Return True bila modul (real/mock) siap."""
+    def begin(self, force_sim: bool = False) -> bool:
+        """
+        Inisialisasi radio. Return True bila modul (real/mock) siap.
+
+        force_sim=True  -> langsung MockRadio, pyrf24 tidak disentuh sama sekali.
+        force_sim=False -> coba NRF sungguhan, jatuh ke MockRadio bila gagal.
+        """
+        if force_sim:
+            self._use_mock()
+            return True
         try:
             from pyrf24 import RF24, RF24_PA_LOW, RF24_250KBPS  # type: ignore
 
@@ -298,14 +323,52 @@ class RadioLink:
             self._radio = radio
             self.simulation = False
             self.module_present = True
+            self.last_error = ""
             return True
 
-        except Exception:
+        except Exception as e:
             # pyrf24 tidak ada / NRF tidak terdeteksi -> mode simulasi
-            self._radio = MockRadio()
-            self.simulation = True
-            self.module_present = True   # modul "virtual" dianggap ada
+            self.last_error = str(e) or e.__class__.__name__
+            self._use_mock()
             return True
+
+    def _use_mock(self) -> None:
+        """Pasang robot tiruan sebagai lawan bicara (mode SIMULASI)."""
+        self._radio = MockRadio()
+        self.simulation = True
+        self.module_present = True       # modul "virtual" dianggap ada
+
+    def set_mode(self, simulation: bool) -> tuple[bool, str]:
+        """
+        Pindah mode REAL <-> SIMULASI selagi aplikasi berjalan (tombol MODE di
+        bilah atas GUI). Radio lama dilepas, sisa sinyal ON/FIN & telemetri
+        dibersihkan supaya tidak tercampur antar-mode.
+
+        Return (berhasil sesuai permintaan?, pesan untuk log/dialog).
+        """
+        with self._lock:
+            old, self._radio = self._radio, None
+            try:
+                if old is not None and hasattr(old, "powerDown"):
+                    old.powerDown()
+            except Exception:
+                pass
+
+        self.clear_rx_state()
+        self._telemetry = None
+        self._telemetry_ts = 0.0
+        self.last_ack_ms = 0.0
+        self.last_error = ""
+
+        self.begin(force_sim=simulation)
+
+        if simulation:
+            return True, "Mode SIMULASI aktif — lawan bicara robot virtual"
+        if self.simulation:
+            why = f" ({self.last_error})" if self.last_error else ""
+            return False, ("Mode REAL gagal: pyrf24/modul NRF tidak tersedia"
+                           f"{why} — kembali ke SIMULASI")
+        return True, "Mode REAL aktif — perintah dikirim ke NRF24 sungguhan"
 
     # ---- kirim -----------------------------------------------------
 
@@ -456,6 +519,15 @@ class RadioLink:
             return None
         return self._telemetry
 
+    def get_telemetry_stamped(self) -> tuple[tuple[float, float, float], float] | None:
+        """
+        Seperti get_telemetry(), tapi disertai WAKTU TERIMA paketnya. Dipakai
+        MPUMonitor untuk membedakan data baru dari data lama yang masih
+        tersimpan — supaya log tidak berisi baris kembar.
+        """
+        tel = self.get_telemetry()
+        return None if tel is None else (tel, self._telemetry_ts)
+
     # ---- status ----------------------------------------------------
 
     def robot_reachable(self, timeout_ms: float = SIGNAL_TIMEOUT_MS) -> bool:
@@ -543,9 +615,13 @@ class MockRadio:
             elif now >= self._next_on:
                 self._next_on = now + 1.0
                 self._outbox.append(f"ON {self._move}".encode())
-        elif not self._outbox and now >= self._next_tel:
-            # telemetri MPU dibatasi lajunya (mirip TELEMETRY_INTERVAL_MS firmware)
-            self._next_tel = now + 0.1
+
+        # Telemetri MPU tetap dikirim SAAT BERGERAK, bukan cuma saat menganggur
+        # — persis firmware Finalnew.ino yang menyelipkannya tiap 200 ms di sela
+        # paket masuk. Kalau tidak begitu, panel sensor mode SIMULASI akan mati
+        # justru ketika heading paling perlu dipantau.
+        if now >= self._next_tel:
+            self._next_tel = now + 0.2
             t = now - self._t0
             roll = 2.0 * math.sin(t * 1.1)
             pitch = 1.5 * math.cos(t * 0.9)
@@ -949,18 +1025,48 @@ class CommandRunner:
 # 3. ACTIVITY LOGGER  —  catat & export
 # =====================================================================
 
+LOG_DIR_NAME = "logs"      # folder auto-simpan, dibuat di samping berkas kode
+LOG_HEADER = "=== LOG AKTIVITAS ROBOT FEEDER AKUATIK ==="
+
+
+def default_log_dir() -> str:
+    """Folder tujuan auto-simpan; dibuat bila belum ada."""
+    base = os.path.join(os.path.dirname(os.path.abspath(__file__)), LOG_DIR_NAME)
+    os.makedirs(base, exist_ok=True)
+    return base
+
+
+def default_log_path(prefix: str = "log_feeder") -> str:
+    """Nama berkas auto-simpan bercap waktu, mis. logs/log_feeder_20260810_143000.txt"""
+    return os.path.join(default_log_dir(),
+                        f"{prefix}_{datetime.now():%Y%m%d_%H%M%S}.txt")
+
+
 @dataclass
 class LogEvent:
     ts: str
     category: str
     message: str
 
+    def line(self) -> str:
+        return f"[{self.ts}] ({self.category}) {self.message}"
+
 
 class ActivityLogger:
-    """Catat aktivitas robot/GUI dengan timestamp, bisa diekspor CSV/TXT."""
+    """
+    Catat aktivitas robot/GUI dengan timestamp.
+
+    Tiga cara menyimpan:
+        - export_csv / export_txt : simpan sekali seluruh isi log,
+        - AUTO-SIMPAN (set_autosave): tiap baris langsung ditulis ke berkas TXT
+          begitu terjadi, jadi catatan uji lapangan tetap utuh walau aplikasi
+          ditutup paksa atau Raspberry Pi kehilangan daya.
+    """
 
     def __init__(self, on_new: Optional[Callable[[LogEvent], None]] = None):
         self.events: list[LogEvent] = []
+        self.autosave_path: str | None = None   # None = auto-simpan mati
+        self.autosave_error = ""                # alasan auto-simpan berhenti
         self._on_new = on_new
         self._lock = threading.Lock()
 
@@ -972,6 +1078,9 @@ class ActivityLogger:
         )
         with self._lock:
             self.events.append(ev)
+            path = self.autosave_path
+        if path:
+            self._append(path, ev.line() + "\n")
         if self._on_new:
             self._on_new(ev)
         return ev
@@ -979,6 +1088,55 @@ class ActivityLogger:
     def clear(self) -> None:
         with self._lock:
             self.events.clear()
+
+    # ---- auto-simpan TXT -------------------------------------------
+
+    def set_autosave(self, path: str | None,
+                     include_backlog: bool = True) -> tuple[bool, str]:
+        """
+        Nyalakan/matikan auto-simpan. path=None mematikannya.
+        Berkas dibuka mode APPEND supaya berkas lama tidak tertimpa.
+        Return (berhasil?, pesan untuk log).
+        """
+        if not path:
+            self.autosave_path = None
+            self.autosave_error = ""
+            return True, "Auto-simpan TXT dimatikan"
+
+        with self._lock:
+            backlog = list(self.events) if include_backlog else []
+        head = (f"{LOG_HEADER}\n"
+                f"# sesi dimulai {datetime.now():%Y-%m-%d %H:%M:%S}\n\n")
+        try:
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(head)
+                for ev in backlog:
+                    f.write(ev.line() + "\n")
+        except Exception as e:
+            self.autosave_path = None
+            self.autosave_error = str(e)
+            return False, f"Auto-simpan TXT gagal: {e}"
+
+        self.autosave_path = path
+        self.autosave_error = ""
+        return True, f"Auto-simpan TXT aktif -> {path}"
+
+    def _append(self, path: str, text: str) -> None:
+        """
+        Tambah satu baris ke berkas auto-simpan. Berkas dibuka-tutup tiap baris
+        supaya isinya sudah tersimpan di disk walau aplikasi mati mendadak
+        (laju log ~1 baris/detik, jadi biayanya tidak berarti).
+        """
+        try:
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(text)
+        except Exception as e:
+            # jangan bikin log spam / bikin thread pemanggil mati — cukup
+            # matikan auto-simpan dan biarkan GUI menampilkan sebabnya.
+            self.autosave_path = None
+            self.autosave_error = str(e)
+
+    # ---- ekspor sekali jalan ---------------------------------------
 
     def export_csv(self, path: str) -> None:
         with self._lock, open(path, "w", newline="", encoding="utf-8") as f:
@@ -989,152 +1147,118 @@ class ActivityLogger:
 
     def export_txt(self, path: str) -> None:
         with self._lock, open(path, "w", encoding="utf-8") as f:
-            f.write("=== LOG AKTIVITAS ROBOT FEEDER AKUATIK ===\n\n")
+            f.write(f"{LOG_HEADER}\n\n")
             for ev in self.events:
-                f.write(f"[{ev.ts}] ({ev.category}) {ev.message}\n")
+                f.write(ev.line() + "\n")
 
 
 # =====================================================================
-# 4. MPU SERIAL READER  —  baca data MPU6050 dari ESP32 via USB Serial
+# 4. MPU MONITOR  —  sudut MPU6050 yang dikirim ROBOT lewat NRF
 # =====================================================================
 #
-# Sumber: Test Part/MPU Test/mpu/mpu.ino  yang mencetak tiap 200 ms:
-#   Angle -> X: <x>   Y: <y>   Z(Yaw): <z>   | Gyro -> X: <gx> Y: <gy> Z: <gz>
+# Revisi Agustus 2026: MPU TIDAK LAGI dibaca lewat kabel USB / port serial.
+# Robot menyisipkan sudutnya pada telemetri balik NRF ("R=..;P=..;Y=..") setiap
+# kali Pengendali Utama mengirim PING, jadi datanya mengalir SENDIRI di latar
+# belakang selama heartbeat hidup — operator tidak perlu memilih port apa pun.
 #
-# Ini jalur data TERPISAH dari NRF (lewat kabel USB). Cocok untuk fase
-# KALIBRASI / UJI BENCH saat board tertambat. Datanya REAL (hasil sensor),
-# beda dengan telemetri estimasi. Saat robot berlayar tanpa kabel, data MPU
-# realtime butuh telemetri NRF 2 arah (iterasi berikutnya).
-
-# Regex parser untuk format baris mpu.ino
-_ANGLE_RE = re.compile(
-    r"Angle\s*->\s*X:\s*(-?[\d.]+)\s*Y:\s*(-?[\d.]+)\s*Z\(Yaw\):\s*(-?[\d.]+)")
-_GYRO_RE = re.compile(
-    r"Gyro\s*->\s*X:\s*(-?[\d.]+)\s*Y:\s*(-?[\d.]+)\s*Z:\s*(-?[\d.]+)")
+#   Robot --(NRF, alamat 00002)--> RadioLink.pump() --> RadioLink.get_telemetry()
+#                                            |
+#                                       MPUMonitor.poll()  --> tampilan + log
+#
+# MPUMonitor hanya menambahkan dua hal di atas RadioLink: menyimpan cuplikan
+# terakhir (beserta sumber & umur data) dan MENCATATNYA ke ActivityLogger bila
+# tombol "Log MPU" dinyalakan operator.
 
 
 @dataclass
-class MPUReading:
-    angle_x: float = 0.0   # roll
-    angle_y: float = 0.0   # pitch
-    angle_z: float = 0.0   # yaw / heading
-    gyro_x: float = 0.0
-    gyro_y: float = 0.0
-    gyro_z: float = 0.0
-    ts: float = 0.0        # time.monotonic()
+class MPUSample:
+    """Satu cuplikan sudut MPU dari telemetri robot."""
+    roll: float = 0.0
+    pitch: float = 0.0
+    yaw: float = 0.0
+    ts: float = 0.0          # time.monotonic() saat diterima
+    source: str = "NRF"      # "NRF" (radio nyata) | "SIMULASI" (robot virtual)
+
+    def human(self) -> str:
+        return (f"Roll={self.roll:.1f} Pitch={self.pitch:.1f} "
+                f"Yaw={self.yaw:.1f}")
+
+    @property
+    def age_s(self) -> float:
+        return max(0.0, time.monotonic() - self.ts)
 
 
-def parse_mpu_line(line: str) -> Optional[MPUReading]:
-    """Parse 1 baris serial dari mpu.ino. Return None bila format tak cocok."""
-    a = _ANGLE_RE.search(line)
-    if not a:
-        return None
-    r = MPUReading(angle_x=float(a.group(1)),
-                   angle_y=float(a.group(2)),
-                   angle_z=float(a.group(3)),
-                   ts=time.monotonic())
-    g = _GYRO_RE.search(line)
-    if g:
-        r.gyro_x, r.gyro_y, r.gyro_z = (float(g.group(1)),
-                                        float(g.group(2)),
-                                        float(g.group(3)))
-    return r
-
-
-class MPUSerialReader:
+class MPUMonitor:
     """
-    Baca MPU6050 dari ESP32 lewat serial USB (pyserial).
-    Kalau pyserial tak ada / port gagal dibuka, bisa jalan MODE SIMULASI
-    (yaw bergerak sinusoidal) supaya GUI tetap dapat didemokan.
+    Pemantau sudut MPU dari telemetri NRF, berjalan di latar belakang.
+
+    poll() dipanggil berkala oleh pemilik (GUI tiap ~120 ms, atau loop CLI).
+    Bila log_enabled aktif, tiap MPU_LOG_INTERVAL_S detik satu baris dicatat ke
+    ActivityLogger — dan ikut terbawa ke berkas auto-simpan TXT bila menyala.
     """
 
-    def __init__(self, on_reading: Optional[Callable[[MPUReading], None]] = None):
-        self.on_reading = on_reading
-        self.latest = MPUReading()
-        self.connected = False
-        self.simulation = False
-        self.port = ""
-        self._ser = None
-        self._thread: Optional[threading.Thread] = None
-        self._stop = threading.Event()
+    def __init__(self, link: RadioLink,
+                 logger: Optional["ActivityLogger"] = None,
+                 interval_s: float = MPU_LOG_INTERVAL_S):
+        self.link = link
+        self.logger = logger
+        self.interval_s = interval_s
 
-    # ---- koneksi ---------------------------------------------------
+        self.log_enabled = False
+        self.latest: Optional[MPUSample] = None   # None = belum/tidak ada data
+        self.samples = 0                          # jumlah cuplikan diterima
+        self.logged = 0                           # jumlah baris tercatat
+        self._last_log = 0.0
+        self._last_ts = -1.0                      # cap waktu paket terakhir
 
-    def start_real(self, port: str, baud: int = 115200) -> tuple[bool, str]:
-        """Buka serial sungguhan. Return (ok, pesan)."""
-        self.stop()
-        try:
-            import serial  # type: ignore
-        except ImportError:
-            return False, "pyserial belum terpasang (pip install pyserial)"
-        try:
-            self._ser = serial.Serial(port, baud, timeout=1)
-        except Exception as e:
-            return False, f"gagal buka {port}: {e}"
+    # ---- kendali ---------------------------------------------------
 
-        self.port = port
-        self.simulation = False
-        self.connected = True
-        self._stop.clear()
-        self._thread = threading.Thread(target=self._read_loop, daemon=True)
-        self._thread.start()
-        return True, f"MPU terhubung di {port} @ {baud}"
+    def set_logging(self, enabled: bool) -> str:
+        """Nyalakan/matikan pencatatan MPU. Return pesan untuk log."""
+        self.log_enabled = bool(enabled)
+        self._last_log = 0.0        # baris pertama langsung tercatat
+        return ("Log MPU AKTIF — sudut dicatat tiap "
+                f"{self.interval_s:g} detik" if self.log_enabled
+                else "Log MPU dimatikan")
 
-    def start_sim(self) -> tuple[bool, str]:
-        """Mode simulasi (tanpa hardware)."""
-        self.stop()
-        self.port = "SIM"
-        self.simulation = True
-        self.connected = True
-        self._stop.clear()
-        self._thread = threading.Thread(target=self._sim_loop, daemon=True)
-        self._thread.start()
-        return True, "MPU mode SIMULASI (data buatan)"
+    def connected(self) -> bool:
+        """True bila ada telemetri segar (belum kedaluwarsa)."""
+        return self.link.get_telemetry() is not None
 
-    def stop(self) -> None:
-        self._stop.set()
-        if self._ser is not None:
-            try:
-                self._ser.close()
-            except Exception:
-                pass
-            self._ser = None
-        self.connected = False
+    # ---- inti ------------------------------------------------------
 
-    # ---- loop pembaca ---------------------------------------------
+    def poll(self) -> Optional[MPUSample]:
+        """
+        Ambil telemetri terbaru; catat ke log bila diminta.
+        Return cuplikan terbaru, atau None bila data belum ada / sudah basi.
 
-    def _emit(self, reading: MPUReading) -> None:
-        self.latest = reading
-        if self.on_reading:
-            self.on_reading(reading)
+        poll() dipanggil jauh lebih sering daripada laju telemetri, jadi paket
+        yang SAMA akan terlihat berkali-kali. Hanya paket BARU yang dihitung &
+        dicatat supaya log tidak berisi baris kembar.
+        """
+        stamped = self.link.get_telemetry_stamped()
+        if stamped is None:
+            self.latest = None
+            return None
 
-    def _read_loop(self) -> None:
-        while not self._stop.is_set() and self._ser is not None:
-            try:
-                raw = self._ser.readline().decode("utf-8", "ignore").strip()
-            except Exception:
-                break
-            if not raw:
-                continue
-            reading = parse_mpu_line(raw)
-            if reading:
-                self._emit(reading)
-        self.connected = False
+        (roll, pitch, yaw), ts = stamped
+        sample = MPUSample(roll=roll, pitch=pitch, yaw=yaw, ts=ts,
+                           source="SIMULASI" if self.link.simulation else "NRF")
+        self.latest = sample
 
-    def _sim_loop(self) -> None:
-        t0 = time.monotonic()
-        while not self._stop.is_set():
-            t = time.monotonic() - t0
-            yaw = 30.0 * math.sin(t * 0.4)                 # ayun -30..30
-            self._emit(MPUReading(
-                angle_x=2.0 * math.sin(t * 1.1) + random.uniform(-0.3, 0.3),
-                angle_y=1.5 * math.cos(t * 0.9) + random.uniform(-0.3, 0.3),
-                angle_z=yaw,
-                gyro_x=random.uniform(-1, 1),
-                gyro_y=random.uniform(-1, 1),
-                gyro_z=12.0 * math.cos(t * 0.4),
-                ts=time.monotonic()))
-            time.sleep(0.2)
+        baru = ts != self._last_ts
+        self._last_ts = ts
+        if not baru:
+            return sample
+        self.samples += 1
+
+        if self.log_enabled and self.logger is not None:
+            now = time.monotonic()
+            if (now - self._last_log) >= self.interval_s:
+                self._last_log = now
+                self.logged += 1
+                self.logger.log(f"MPU-{sample.source}", sample.human())
+        return sample
 
 
 # =====================================================================
@@ -1144,11 +1268,13 @@ class MPUSerialReader:
 if __name__ == "__main__":
     print("== SELF-TEST feeder_core ==\n")
 
-    # RadioLink (akan fallback ke simulasi di PC)
+    # RadioLink — aplikasi kini MULAI di mode SIMULASI (default), dan bisa
+    # dipindah ke REAL lewat set_mode() dari tombol MODE di GUI.
     link = RadioLink()
-    link.begin()
+    link.begin(force_sim=True)
     print(f"Radio siap. Simulasi={link.simulation} "
           f"module_present={link.module_present}")
+    assert link.simulation is True, "default aplikasi harus mode SIMULASI"
 
     # Telemetri 2 arah (gantian TX/RX) — di simulasi MockRadio membalas MPU
     link.ping()
@@ -1231,17 +1357,68 @@ if __name__ == "__main__":
     assert pwm_for_move(MOVE_CCW) == (STOP_PWM, CRUISE_PWM)
     assert pwm_for_move(MOVE_STOP) == (STOP_PWM, STOP_PWM)
 
-    # MPU parser
-    sample = ("Angle -> X: 1.23\tY: -4.56\tZ(Yaw): 88.90   "
-              "| Gyro -> X: 0.10\tY: -0.20\tZ: 12.30")
-    r = parse_mpu_line(sample)
-    print(f"\nParse MPU: roll={r.angle_x} pitch={r.angle_y} yaw={r.angle_z} " # type: ignore
-          f"gyroZ={r.gyro_z}") # type: ignore
-    assert r and abs(r.angle_z - 88.90) < 1e-6, "parser MPU gagal"
+    # ---- Perintah MAJU dalam METER (satuan antarmuka MANUAL) ----
+    print("\n== Maju dalam meter -> paket FW 10-200 cm ==")
+    for meters in (0.5, 1.0, 3.0, 12.5):
+        cmds = split_forward(meters)
+        total_cm = sum(c.dist for c in cmds)
+        print(f"  {meters:5.2f} m -> {len(cmds)} paket "
+              f"({'  '.join(c.encode().decode() for c in cmds[:4])}"
+              f"{' ...' if len(cmds) > 4 else ''}) = {total_cm} cm")
+        assert all(c.validate()[0] for c in cmds), "paket FW di luar rentang"
+        assert abs(total_cm - meters * 100) <= len(cmds), "jarak total melenceng"
+    assert split_forward(MANUAL_FW_MIN_M), "batas bawah manual harus bisa dikirim"
+    assert len(split_forward(MANUAL_FW_MAX_M)) == 25
+    print("  [OK] jarak meter dipecah rata & tetap sah")
 
-    # ActivityLogger
+    # ---- MPU lewat telemetri NRF (tanpa port serial) ----
+    print("\n== MPU monitor (telemetri NRF, latar belakang) ==")
+    log = ActivityLogger()
+    mpu = MPUMonitor(link, logger=log, interval_s=0.2)
+    print("  " + mpu.set_logging(True))
+    for _ in range(4):
+        link.ping()
+        s = mpu.poll()
+        time.sleep(0.25)
+    assert mpu.latest is not None, "telemetri MPU tidak sampai ke monitor"
+    print(f"  cuplikan terakhir: {mpu.latest.human()} "
+          f"(sumber {mpu.latest.source}, umur {mpu.latest.age_s:.2f} s)")
+    assert mpu.logged >= 2, "log MPU tidak berjalan"
+    assert all(e.category == "MPU-SIMULASI" for e in log.events)
+    mpu.set_logging(False)
+    n_before = len(log.events)
+    link.ping(); mpu.poll()
+    assert len(log.events) == n_before, "log MPU masih menulis setelah dimatikan"
+    print("  [OK] sudut MPU mengalir sendiri & toggle log berfungsi")
+
+    # ---- ActivityLogger + AUTO-SIMPAN TXT ----
+    print("\n== Auto-simpan log ke TXT ==")
     log = ActivityLogger()
     log.log("MISI", "Misi 10x4 dikirim")
+    auto_path = default_log_path("selftest")
+    ok, msg = log.set_autosave(auto_path)
+    print("  " + msg)
+    assert ok, msg
     log.log("STATUS", "Robot ACK OK")
-    print(f"Log tercatat: {len(log.events)} event")
-    print("== SELF-TEST selesai ==")
+    isi = open(auto_path, encoding="utf-8").read()
+    assert "Misi 10x4 dikirim" in isi, "catatan lama tidak ikut tersimpan"
+    assert "Robot ACK OK" in isi, "catatan baru tidak ikut tersimpan"
+    ok, msg = log.set_autosave(None)
+    log.log("STATUS", "setelah auto-simpan mati")
+    assert "setelah auto-simpan mati" not in open(auto_path, encoding="utf-8").read()
+    os.remove(auto_path)
+    print(f"  [OK] {len(log.events)} event tercatat, berkas TXT terisi realtime")
+
+    # ---- Pindah mode REAL <-> SIMULASI ----
+    print("\n== Tombol MODE (REAL / SIMULASI) ==")
+    ok, msg = link.set_mode(simulation=False)     # di PC tanpa NRF -> gagal
+    print(f"  minta REAL   -> ok={ok}: {msg}")
+    assert link.module_present, "harus tetap ada modul (nyata atau virtual)"
+    ok, msg = link.set_mode(simulation=True)
+    print(f"  minta SIMULASI -> ok={ok}: {msg}")
+    assert ok and link.simulation, "gagal kembali ke SIMULASI"
+    link.ping()
+    assert link.get_telemetry() is not None, "radio tidak hidup setelah pindah mode"
+    print("  [OK] perpindahan mode aman & radio langsung hidup lagi")
+
+    print("\n== SELF-TEST selesai ==")
