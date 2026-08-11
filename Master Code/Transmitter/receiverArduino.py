@@ -11,7 +11,13 @@ Jalankan SATU file ini untuk menjalankan semuanya (GUI + telemetri + logging):
 
 Aplikasi MULAI DI MODE SIMULASI (robot virtual) supaya aman dipakai latihan &
 demo di mana pun. Pindah ke NRF sungguhan lewat tombol MODE di bilah atas GUI,
-lewat pemilih MODE KERJA di halaman SISTEM, atau lewat flag --real di atas.
+lewat pemilih MODE KERJA di SETTING > SISTEM, atau lewat flag --real di atas.
+
+Alur GUI mengikuti pekerjaan operator, bukan menu: BERANDA hanya menawarkan
+MISI dan SETTING, lalu DASHBOARD (status, koordinat MPU, tombol berhenti)
+terbuka SENDIRI begitu misi/perintah dikirim. Pencatatan aktivitas + sudut MPU
+menyala sejak start ke logs/*.txt, dan berkas berumur > 3 hari dibuang otomatis
+supaya kartu SD Raspberry Pi tidak penuh.
 
 Logika inti ada di:
     - feeder_gui.py    (antarmuka CustomTkinter, gaya ATM, mengikuti layar)
@@ -56,10 +62,10 @@ def run_cli(simulation: bool = True):
     import time
 
     from feeder_core import (
-        ActivityLogger, CommandRunner, HEARTBEAT_INTERVAL_S, MPUMonitor,
-        MANUAL_FW_MAX_M, MANUAL_FW_MIN_M, MOVE_RANGE, RadioLink, RobotCommand,
-        default_log_path, plan_command_queue, plan_coverage, queue_duration_s,
-        split_forward,
+        ActivityLogger, CommandRunner, HEARTBEAT_INTERVAL_S, LOG_RETENTION_DAYS,
+        MPUMonitor, MANUAL_FW_MAX_M, MANUAL_FW_MIN_M, MOVE_RANGE, RadioLink,
+        RobotCommand, default_log_path, plan_command_queue, plan_coverage,
+        purge_old_logs, queue_duration_s, split_forward,
     )
 
     link = RadioLink()
@@ -79,6 +85,14 @@ def run_cli(simulation: bool = True):
 
     threading.Thread(target=background, daemon=True).start()
 
+    # Sama seperti GUI: bersihkan log kedaluwarsa lalu catat sejak awal.
+    terhapus, _ = purge_old_logs()
+    if terhapus:
+        print(f"  {len(terhapus)} berkas log > {LOG_RETENTION_DAYS} hari dihapus")
+    ok, msg = logger.set_autosave(default_log_path())
+    print(" ", msg)
+    mpu.set_logging(True)
+
     print("=== PENGENDALI UTAMA — ROBOT AKUATIK (mode teks) ===")
     print("Mode:", "SIMULASI (robot virtual)" if link.simulation
                    else "REAL (NRF aktif)")
@@ -91,7 +105,7 @@ def run_cli(simulation: bool = True):
     print("   MISI <p> <l>    susun & jalankan sapuan zigzag tambak p x l meter")
     print("   MODE <real|sim> pindah lawan bicara radio")
     print("   MPU <on|off>    catat sudut MPU dari telemetri NRF")
-    print("   SIMPAN <on|off> auto-simpan log ke berkas TXT")
+    print("   SIMPAN <on|off> auto-simpan log ke berkas TXT (default: nyala)")
     print("   STOP            berhenti darurat")
     print("   KELUAR")
 

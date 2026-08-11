@@ -6,34 +6,40 @@ Antarmuka PENGENDALI UTAMA. Dijalankan di Raspberry Pi dengan layar sentuh
 7 inci. Aplikasi SELALU MULAI DI MODE SIMULASI (aman untuk demo & latihan);
 tombol MODE pada bilah status atas memindahkannya ke NRF sungguhan kapan saja.
 
-RANCANGAN TAMPILAN (revisi: gaya mesin ATM)
--------------------------------------------
+RANCANGAN TAMPILAN (revisi dospem: alur, bukan menu)
+----------------------------------------------------
 Jendela mengikuti UKURAN LAYAR PERANGKAT (fullscreen, tanpa bilah judul) dan
 seluruh ukuran huruf/tombol diskalakan dari acuan 800x480 piksel — resolusi
-layar sentuh 7 inci. Alih-alih menumpuk semua panel dalam satu layar padat,
-antarmuka dipecah menjadi HALAMAN dengan navigasi tombol besar di bawah,
-persis pola mesin ATM: satu layar = satu tugas, target sentuh lebar,
-tombol berhenti darurat selalu terlihat.
+layar sentuh 7 inci.
+
+Bilah navigasi enam tombol DIHAPUS. Operator tidak lagi disodori enam halaman
+sekaligus; ia dituntun mengikuti ALUR KERJA sebenarnya, seperti mesin ATM:
+beranda hanya menawarkan dua pilihan, dan DASHBOARD terbuka SENDIRI begitu misi
+dikirim — bukan sesuatu yang harus dicari lewat menu.
+
+    BERANDA                MISI                     DASHBOARD (berjalan)
+    +-----------+   ->     +---------------+   ->   +-------------------+
+    |   MISI    |          | ukuran tambak |        | status + progres  |
+    +-----------+          | preview jalur |        | sudut MPU (real)  |
+    |  SETTING  |          | [KIRIM MISI]  |        | [ STOP ]          |
+    +-----------+          +---------------+        +-------------------+
 
     +--------------------------------------------------+
-    |  judul       [MODE*][NRF][ROBOT]      [ STOP ]   |  bilah status
+    | [<]  judul   [MODE*][NRF][ROBOT]      [ STOP ]   |  bilah status
     +--------------------------------------------------+     * bisa disentuh:
-                                                           REAL <-> SIMULASI
-    |                                                  |
-    |                  ISI HALAMAN                     |
-    |                                                  |
-    +--------------------------------------------------+
-    | BERANDA | MISI | MANUAL | SENSOR | LOG | SISTEM  |  navigasi
+    |                  ISI HALAMAN                     |    REAL <-> SIMULASI
     +--------------------------------------------------+
 
 Halaman:
-    BERANDA -> ringkasan status + perintah yang sedang berjalan
-    MISI    -> dimensi tambak, preview jalur, kirim antrean perintah
-    MANUAL  -> maju dalam METER + putar kiri/kanan (+ STOP di bilah atas)
-    SENSOR  -> telemetri baling-baling (estimasi) & sudut MPU dari NRF (real),
-               plus tombol nyala/mati pencatatan MPU
-    LOG     -> catatan aktivitas, auto-simpan TXT, ekspor CSV/TXT
-    SISTEM  -> kontrol komponen, pilih mode REAL/SIMULASI, keluar aplikasi
+    BERANDA   -> dua tombol besar: MISI dan SETTING (plus jalan pintas kembali
+                 ke dashboard bila ada misi yang sedang berjalan)
+    MISI      -> dimensi tambak, preview jalur; KIRIM MISI -> pindah otomatis
+                 ke DASHBOARD
+    DASHBOARD -> layar pemantauan misi berjalan: status, perintah, kemajuan,
+                 KOORDINAT/SUDUT MPU real, gauge baling-baling, tombol STOP
+    SETTING   -> tiga sub-halaman: SISTEM (mode REAL/SIMULASI + komponen),
+                 MANUAL (maju dalam meter, putar kiri/kanan), LOG (catatan,
+                 auto-simpan TXT, retensi berkas)
 
 Papan angka muncul sebagai LAPISAN PENUH saat sebuah kolom disentuh, supaya
 halaman tetap lega tanpa kehilangan kemampuan input tanpa keyboard.
@@ -82,6 +88,8 @@ from feeder_core import (
     HEARTBEAT_INTERVAL_S,
     LANE_WIDTH_M,
     LOG_DIR_NAME,
+    LOG_PURGE_INTERVAL_S,
+    LOG_RETENTION_DAYS,
     MANUAL_FW_MAX_M,
     MANUAL_FW_MIN_M,
     MANUAL_FW_STEP_M,
@@ -90,6 +98,7 @@ from feeder_core import (
     MOTOR_KV,
     BATTERY_V,
     default_log_path,
+    purge_old_logs,
     estimate_rpm,
     estimate_speed_mps,
     plan_command_queue,
@@ -170,7 +179,7 @@ class FeederGUI(ctk.CTk):
         self.mpu = MPUMonitor(self.link, logger=self.logger)
 
         self._pages: dict[str, ctk.CTkFrame] = {}
-        self._nav_buttons: dict[str, ctk.CTkButton] = {}
+        self._setting_tabs: dict[str, ctk.CTkFrame] = {}
         self._active_page = ""
 
         self._build_ui()
@@ -188,10 +197,44 @@ class FeederGUI(ctk.CTk):
                         f"Layar {self.screen_w}x{self.screen_h} px "
                         f"(skala tampilan {self.S:.2f}x dari acuan 800x480)")
 
+        # Pencatatan dinyalakan SEJAK START (arahan dospem): operator tidak perlu
+        # ingat menekan apa pun — setiap uji lapangan otomatis punya berkas TXT.
+        self._start_logging()
+
         threading.Thread(target=self._heartbeat_loop, daemon=True).start()
         self.after(300, self._refresh_plan)
         self.after(self.UI_TICK_MS, self._ui_tick)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    def _start_logging(self):
+        """Bersihkan log kedaluwarsa, lalu nyalakan auto-simpan TXT & log MPU."""
+        self._purge_logs()
+        self.sw_autosave.select()
+        self._on_toggle_autosave()
+        self.sw_mpu_record.select()
+        self._on_mpu_record()
+        # periksa ulang retensi selagi aplikasi hidup (mis. dipakai berhari-hari)
+        self.after(int(LOG_PURGE_INTERVAL_S * 1000), self._purge_logs_periodic)
+
+    def _purge_logs(self):
+        """
+        Buang berkas log yang lebih tua dari LOG_RETENTION_DAYS hari. Berkas yang
+        sedang ditulis dikecualikan supaya sesi berjalan tidak ikut terhapus.
+        """
+        terhapus, gagal = purge_old_logs(keep=self.logger.autosave_path)
+        if terhapus:
+            self.logger.log("LOG", f"{len(terhapus)} berkas log > "
+                                   f"{LOG_RETENTION_DAYS} hari dihapus "
+                                   f"({', '.join(terhapus[:3])}"
+                                   f"{' ...' if len(terhapus) > 3 else ''})")
+        for pesan in gagal:
+            self.logger.log("PERINGATAN", f"Gagal menghapus log lama — {pesan}")
+
+    def _purge_logs_periodic(self):
+        if self._closing:
+            return
+        self._purge_logs()
+        self.after(int(LOG_PURGE_INTERVAL_S * 1000), self._purge_logs_periodic)
 
     def _setup_screen(self, fullscreen: bool):
         """
@@ -239,7 +282,7 @@ class FeederGUI(ctk.CTk):
         return ("", max(8, int(round(size * self.S))), "bold" if bold else "normal")
 
     # ==================================================================
-    # KERANGKA: bilah status + area halaman + navigasi
+    # KERANGKA: bilah status + area halaman
     # ==================================================================
 
     def _build_ui(self):
@@ -254,15 +297,12 @@ class FeederGUI(ctk.CTk):
         self.page_area.grid_columnconfigure(0, weight=1)
         self.page_area.grid_rowconfigure(0, weight=1)
 
-        self._build_navbar()
-
-        # halaman
-        self._pages["BERANDA"] = self._build_page_home()
-        self._pages["MISI"]    = self._build_page_mission()
-        self._pages["MANUAL"]  = self._build_page_manual()
-        self._pages["SENSOR"]  = self._build_page_sensor()
-        self._pages["LOG"]     = self._build_page_log()
-        self._pages["SISTEM"]  = self._build_page_system()
+        # Empat halaman saja. MANUAL / LOG / SISTEM tidak lagi berdiri sendiri —
+        # ketiganya menjadi sub-halaman SETTING (lihat _build_page_settings).
+        self._pages["BERANDA"]   = self._build_page_home()
+        self._pages["MISI"]      = self._build_page_mission()
+        self._pages["DASHBOARD"] = self._build_page_dashboard()
+        self._pages["SETTING"]   = self._build_page_settings()
         for pg in self._pages.values():
             pg.grid(row=0, column=0, sticky="nsew")
 
@@ -271,14 +311,32 @@ class FeederGUI(ctk.CTk):
 
     # ---- bilah status atas -------------------------------------------
 
+    PAGE_TITLE = {
+        "BERANDA":   "ROBOT AKUATIK  ·  PENGENDALI UTAMA",
+        "MISI":      "MISI  ·  susun jalur penebaran",
+        "DASHBOARD": "DASHBOARD  ·  misi berjalan",
+        "SETTING":   "SETTING",
+    }
+
     def _build_topbar(self):
         bar = ctk.CTkFrame(self, height=self.px(50), corner_radius=0,
                            fg_color=COLOR_NAV)
         bar.grid(row=0, column=0, sticky="ew")
         bar.grid_propagate(False)
 
-        ctk.CTkLabel(bar, text="ROBOT AKUATIK  ·  PENGENDALI UTAMA",
-                     font=self.F(13, True)).pack(side="left", padx=self.px(12))
+        # Tombol kembali menggantikan bilah navigasi enam tombol. Dipasang
+        # dengan grid supaya grid_remove()/grid() mengembalikannya ke kolom yang
+        # sama — judul tidak bergeser saat tombol disembunyikan di BERANDA.
+        head = ctk.CTkFrame(bar, fg_color="transparent")
+        head.pack(side="left", padx=self.px(10))
+        self.btn_back = ctk.CTkButton(
+            head, text="‹", width=self.px(40), height=self.px(34),
+            font=self.F(20, True), fg_color="#243442", hover_color="#2f4557",
+            command=self._on_back)
+        self.btn_back.grid(row=0, column=0, padx=(0, self.px(8)))
+        self.lbl_title = ctk.CTkLabel(head, text=self.PAGE_TITLE["BERANDA"],
+                                      font=self.F(13, True))
+        self.lbl_title.grid(row=0, column=1)
 
         # tombol berhenti darurat — selalu terlihat di setiap halaman
         self.btn_stop = ctk.CTkButton(
@@ -312,42 +370,41 @@ class FeederGUI(ctk.CTk):
         val.pack(padx=self.px(9), pady=(0, self.px(3)))
         return val
 
-    # ---- navigasi bawah ----------------------------------------------
-
-    def _build_navbar(self):
-        nav = ctk.CTkFrame(self, height=self.px(62), corner_radius=0,
-                           fg_color=COLOR_NAV)
-        nav.grid(row=2, column=0, sticky="ew")
-        nav.grid_propagate(False)
-
-        pages = [("BERANDA", "⌂  BERANDA"), ("MISI", "▦  MISI"),
-                 ("MANUAL", "⇄  MANUAL"), ("SENSOR", "◎  SENSOR"),
-                 ("LOG", "≡  LOG"), ("SISTEM", "⚙  SISTEM")]
-        for i, (key, label) in enumerate(pages):
-            nav.grid_columnconfigure(i, weight=1)
-            b = ctk.CTkButton(nav, text=label, font=self.F(11, True),
-                              height=self.px(46), corner_radius=self.px(8),
-                              fg_color="transparent", hover_color="#2b3a48",
-                              command=lambda k=key: self.show_page(k))
-            b.grid(row=0, column=i, sticky="ew",
-                   padx=self.px(4), pady=self.px(8))
-            self._nav_buttons[key] = b
+    # ---- perpindahan halaman -----------------------------------------
 
     def show_page(self, key: str):
         if key not in self._pages:
             return
         self._active_page = key
         self._pages[key].tkraise()
-        for k, b in self._nav_buttons.items():
-            b.configure(fg_color=COLOR_NAVON if k == key else "transparent")
+        self.lbl_title.configure(text=self.PAGE_TITLE.get(key, key))
+        # BERANDA adalah pangkal alur — tidak ada tempat untuk "kembali".
+        if key == "BERANDA":
+            self.btn_back.grid_remove()
+        else:
+            self.btn_back.grid()
         if key == "MISI":
             self.after(60, self._draw_pond)
+        elif key == "SETTING":
+            # judul ikut menyebut sub-halaman yang sedang terbuka
+            self.show_setting_tab(self.seg_setting.get())
+
+    def _on_back(self):
+        """Tombol '‹' di bilah atas — satu-satunya jalan pulang, selalu ke
+        BERANDA (sub-halaman SETTING punya pemilih sendiri yang selalu terlihat)."""
+        self.show_page("BERANDA")
 
     # ==================================================================
-    # HALAMAN 1 — BERANDA
+    # HALAMAN 1 — BERANDA (peluncur: hanya MISI & SETTING)
     # ==================================================================
 
     def _build_page_home(self):
+        """
+        Layar pembuka sengaja hanya menawarkan DUA pilihan. Dashboard tidak
+        dipajang sebagai menu karena bukan tujuan yang dipilih operator — ia
+        terbuka sendiri sesudah misi dikirim. Jalan pintas ke dashboard hanya
+        muncul selagi ada perintah yang benar-benar berjalan.
+        """
         pg = ctk.CTkFrame(self.page_area, fg_color="transparent")
         pg.grid_columnconfigure(0, weight=1)
         pg.grid_rowconfigure(0, weight=1)
@@ -356,51 +413,46 @@ class FeederGUI(ctk.CTk):
         card.grid(row=0, column=0, sticky="nsew")
         card.grid_columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(card, text="STATUS ROBOT", font=self.F(11),
-                     text_color=COLOR_IDLE).pack(pady=(self.px(14), 0))
-        self.home_status = ctk.CTkLabel(card, text="SIAP", font=self.F(30, True),
-                                        text_color=COLOR_OK)
-        self.home_status.pack(pady=(self.px(2), self.px(2)))
+        ctk.CTkLabel(card, text="ROBOT AKUATIK FEEDER OTOMATIS",
+                     font=self.F(20, True)).pack(pady=(self.px(20), 0))
+        self.home_hint = ctk.CTkLabel(
+            card, text="pilih pekerjaan", font=self.F(11),
+            text_color=COLOR_IDLE)
+        self.home_hint.pack(pady=(self.px(2), self.px(14)))
 
-        self.home_cmd = ctk.CTkLabel(card, text="Belum ada perintah berjalan",
-                                     font=self.F(14, True))
-        self.home_cmd.pack()
+        box = ctk.CTkFrame(card, fg_color="transparent")
+        box.pack(fill="x", padx=self.px(60))
+        box.grid_columnconfigure(0, weight=1)
 
-        self.home_progress = ctk.CTkProgressBar(card, height=self.px(16))
-        self.home_progress.set(0)
-        self.home_progress.pack(fill="x", padx=self.px(30), pady=self.px(10))
-
-        self.home_detail = ctk.CTkLabel(card, text="—", font=self.F(11),
-                                        text_color=COLOR_IDLE)
-        self.home_detail.pack()
-
-        # tiga ubin ringkas
-        tiles = ctk.CTkFrame(card, fg_color="transparent")
-        tiles.pack(fill="x", padx=self.px(20), pady=self.px(12))
-        for i in range(3):
-            tiles.grid_columnconfigure(i, weight=1)
-        self.tile_queue = self._tile(tiles, 0, "ANTREAN PERINTAH")
-        self.tile_eta   = self._tile(tiles, 1, "PERKIRAAN WAKTU")
-        self.tile_yaw   = self._tile(tiles, 2, "ARAH HADAP (YAW)")
-
-        # dua tombol besar
-        row = ctk.CTkFrame(card, fg_color="transparent")
-        row.pack(fill="x", padx=self.px(20), pady=(0, self.px(16)))
-        row.grid_columnconfigure((0, 1), weight=1)
-        ctk.CTkButton(row, text="▶   MULAI MISI", height=self.px(52),
-                      font=self.F(15, True), fg_color=COLOR_OK,
-                      hover_color="#27ae60",
+        ctk.CTkButton(box, text="▶   MISI", height=self.px(76),
+                      font=self.F(22, True), fg_color=COLOR_OK,
+                      hover_color="#27ae60", corner_radius=self.px(10),
                       command=lambda: self.show_page("MISI")).grid(
-            row=0, column=0, sticky="ew", padx=self.px(6))
-        ctk.CTkButton(row, text="⇄   KENDALI MANUAL", height=self.px(52),
-                      font=self.F(15, True),
-                      command=lambda: self.show_page("MANUAL")).grid(
-            row=0, column=1, sticky="ew", padx=self.px(6))
+            row=0, column=0, sticky="ew", pady=self.px(6))
+        ctk.CTkLabel(box, text="ukur tambak · susun jalur · kirim ke robot",
+                     font=self.F(9), text_color=COLOR_IDLE).grid(row=1, column=0)
+
+        ctk.CTkButton(box, text="⚙   SETTING", height=self.px(76),
+                      font=self.F(22, True), corner_radius=self.px(10),
+                      command=lambda: self.show_page("SETTING")).grid(
+            row=2, column=0, sticky="ew", pady=(self.px(12), self.px(6)))
+        ctk.CTkLabel(box, text="sistem & mode · kendali manual · log",
+                     font=self.F(9), text_color=COLOR_IDLE).grid(row=3, column=0)
+
+        # Jalan pintas kembali ke dashboard — hanya tampil saat misi berjalan.
+        self.btn_home_dash = ctk.CTkButton(
+            card, text="●   LIHAT DASHBOARD  (misi sedang berjalan)",
+            height=self.px(46), font=self.F(13, True), fg_color=COLOR_WARN,
+            hover_color="#d68910",
+            command=lambda: self.show_page("DASHBOARD"))
+        self.btn_home_dash.pack(fill="x", padx=self.px(60),
+                                pady=(self.px(14), self.px(16)))
+        self.btn_home_dash.pack_forget()
         return pg
 
-    def _tile(self, parent, col, title):
+    def _tile(self, parent, col, title, row=0):
         cell = ctk.CTkFrame(parent, corner_radius=self.px(8))
-        cell.grid(row=0, column=col, sticky="ew", padx=self.px(6))
+        cell.grid(row=row, column=col, sticky="ew", padx=self.px(6))
         ctk.CTkLabel(cell, text=title, font=self.F(9),
                      text_color=COLOR_IDLE).pack(pady=(self.px(7), 0))
         val = ctk.CTkLabel(cell, text="—", font=self.F(17, True))
@@ -498,11 +550,52 @@ class FeederGUI(ctk.CTk):
         return e
 
     # ==================================================================
-    # HALAMAN 3 — MANUAL (input FW / CW / CCW)
+    # HALAMAN 4 — SETTING  (tiga sub-halaman: SISTEM · MANUAL · LOG)
     # ==================================================================
+    #
+    # Bilah navigasi enam tombol dihapus, tetapi TIDAK ADA fitur yang hilang:
+    # ketiga halaman yang dulu berdiri sendiri berkumpul di sini, dipilih lewat
+    # satu pemilih segmen di puncak halaman.
 
-    def _build_page_manual(self):
+    SETTING_TABS = ("SISTEM", "MANUAL", "LOG")
+
+    def _build_page_settings(self):
         pg = ctk.CTkFrame(self.page_area, fg_color="transparent")
+        pg.grid_columnconfigure(0, weight=1)
+        pg.grid_rowconfigure(1, weight=1)
+
+        self.seg_setting = ctk.CTkSegmentedButton(
+            pg, values=list(self.SETTING_TABS), font=self.F(12, True),
+            height=self.px(38), command=self.show_setting_tab)
+        self.seg_setting.set("SISTEM")
+        self.seg_setting.grid(row=0, column=0, sticky="ew", pady=(0, self.px(6)))
+
+        body = ctk.CTkFrame(pg, fg_color="transparent")
+        body.grid(row=1, column=0, sticky="nsew")
+        body.grid_columnconfigure(0, weight=1)
+        body.grid_rowconfigure(0, weight=1)
+
+        self._setting_tabs["SISTEM"] = self._build_page_system(body)
+        self._setting_tabs["MANUAL"] = self._build_page_manual(body)
+        self._setting_tabs["LOG"]    = self._build_page_log(body)
+        for frame in self._setting_tabs.values():
+            frame.grid(row=0, column=0, sticky="nsew")
+        self.show_setting_tab("SISTEM")
+        return pg
+
+    def show_setting_tab(self, key: str):
+        frame = self._setting_tabs.get(key)
+        if frame is None:
+            return
+        frame.tkraise()
+        if self.seg_setting.get() != key:
+            self.seg_setting.set(key)
+        self.lbl_title.configure(text=f"SETTING  ·  {key}")
+
+    # ---- SETTING / MANUAL (maju dalam meter, putar kiri-kanan) --------
+
+    def _build_page_manual(self, parent):
+        pg = ctk.CTkFrame(parent, fg_color="transparent")
         pg.grid_columnconfigure(0, weight=1)
         pg.grid_rowconfigure(1, weight=1)
 
@@ -615,79 +708,110 @@ class FeederGUI(ctk.CTk):
         return {"val": val, "hint": hint}
 
     # ==================================================================
-    # HALAMAN 4 — SENSOR (telemetri baling-baling + MPU)
+    # HALAMAN 3 — DASHBOARD (layar pemantauan misi berjalan)
     # ==================================================================
+    #
+    # Terbuka OTOMATIS begitu misi/perintah dikirim. Menggabungkan apa yang
+    # dulu terpecah di BERANDA + SENSOR: status perintah, kemajuan antrean,
+    # koordinat/sudut MPU yang dikirim robot, gauge baling-baling, dan tombol
+    # berhenti berukuran besar — satu layar untuk mengawasi robot bekerja.
 
-    def _build_page_sensor(self):
+    def _build_page_dashboard(self):
         pg = ctk.CTkFrame(self.page_area, fg_color="transparent")
         pg.grid_columnconfigure(0, weight=1)
-        pg.grid_rowconfigure((0, 1), weight=1)
+        pg.grid_rowconfigure(1, weight=1)
 
-        # --- baling-baling (estimasi) ---
+        # --- status perintah yang sedang berjalan ---
         top = ctk.CTkFrame(pg, corner_radius=self.px(10))
-        top.grid(row=0, column=0, sticky="nsew", pady=(0, self.px(5)))
-        top.grid_columnconfigure((0, 1), weight=1)
-        ctk.CTkLabel(top, text="BALING-BALING  ·  estimasi dari throttle PWM  "
-                               f"(KV={MOTOR_KV:.0f}, V={BATTERY_V}) — bukan "
-                               "hasil ukur sensor RPM",
-                     font=self.F(10, True), text_color=COLOR_WARN).grid(
-            row=0, column=0, columnspan=2, pady=(self.px(6), self.px(2)))
-        self.gauge_left  = self._gauge(top, 0, "KIRI")
-        self.gauge_right = self._gauge(top, 1, "KANAN")
+        top.grid(row=0, column=0, sticky="ew")
+        top.grid_columnconfigure(0, weight=1)
 
-        # --- MPU (real, lewat telemetri NRF — tanpa port serial) ---
-        bot = ctk.CTkFrame(pg, corner_radius=self.px(10))
-        bot.grid(row=1, column=0, sticky="nsew")
-        bot.grid_columnconfigure((0, 1, 2), weight=1)
-        ctk.CTkLabel(bot, text="SENSOR MPU  ·  data REAL dari robot  —  "
-                               "dikirim sendiri lewat NRF, tanpa kabel/port",
-                     font=self.F(10, True)).grid(row=0, column=0, columnspan=3,
+        self.home_status = ctk.CTkLabel(top, text="SIAP", font=self.F(24, True),
+                                        text_color=COLOR_OK)
+        self.home_status.grid(row=0, column=0, pady=(self.px(6), 0))
+        self.home_cmd = ctk.CTkLabel(top, text="Belum ada perintah berjalan",
+                                     font=self.F(13, True))
+        self.home_cmd.grid(row=1, column=0)
+        self.home_progress = ctk.CTkProgressBar(top, height=self.px(14))
+        self.home_progress.set(0)
+        self.home_progress.grid(row=2, column=0, sticky="ew",
+                                padx=self.px(24), pady=self.px(6))
+        self.home_detail = ctk.CTkLabel(top, text="—", font=self.F(10),
+                                        text_color=COLOR_IDLE)
+        self.home_detail.grid(row=3, column=0, pady=(0, self.px(6)))
+
+        # --- badan: koordinat MPU (kiri) + baling-baling (kanan) ---
+        body = ctk.CTkFrame(pg, fg_color="transparent")
+        body.grid(row=1, column=0, sticky="nsew", pady=self.px(5))
+        body.grid_columnconfigure((0, 1), weight=1)
+        body.grid_rowconfigure(0, weight=1)
+
+        mpu = ctk.CTkFrame(body, corner_radius=self.px(10))
+        mpu.grid(row=0, column=0, sticky="nsew", padx=(0, self.px(4)))
+        mpu.grid_columnconfigure((0, 1), weight=1)
+        ctk.CTkLabel(mpu, text="KOORDINAT SUDUT MPU  ·  REAL dari robot",
+                     font=self.F(10, True)).grid(row=0, column=0, columnspan=2,
                                                  pady=(self.px(6), self.px(2)))
-
-        ctrl = ctk.CTkFrame(bot, fg_color="transparent")
-        ctrl.grid(row=1, column=0, columnspan=3, sticky="ew",
-                  padx=self.px(12), pady=self.px(3))
-        ctk.CTkLabel(ctrl, text="Sudut mengalir di latar belakang selama "
-                                "heartbeat hidup.", font=self.F(10),
-                     text_color=COLOR_IDLE).pack(side="left")
-        self.sw_mpu_record = ctk.CTkSwitch(
-            ctrl, text=f"Log MPU (tiap {MPU_LOG_INTERVAL_S:g} s)",
-            font=self.F(10), command=self._on_mpu_record)
-        self.sw_mpu_record.pack(side="right")
-
         self.mpu_tiles = {
-            "roll":  self._mpu_tile(bot, 0, "ROLL (X)"),
-            "pitch": self._mpu_tile(bot, 1, "PITCH (Y)"),
-            "yaw":   self._mpu_tile(bot, 2, "YAW / HEADING (Z)"),
+            "roll":  self._mpu_tile(mpu, 0, "ROLL (X)", row=1),
+            "pitch": self._mpu_tile(mpu, 1, "PITCH (Y)", row=1),
         }
-        self.lbl_mpu_src = ctk.CTkLabel(bot, text="status: TERPUTUS",
+        self.mpu_tiles["yaw"] = self._mpu_tile(mpu, 0, "YAW / HEADING (Z)",
+                                               row=2, span=2)
+        self.lbl_mpu_src = ctk.CTkLabel(mpu, text="menunggu telemetri robot",
                                         font=self.F(9), text_color=COLOR_IDLE)
-        self.lbl_mpu_src.grid(row=3, column=0, columnspan=3,
+        self.lbl_mpu_src.grid(row=3, column=0, columnspan=2,
                               pady=(self.px(1), self.px(6)))
+
+        prop = ctk.CTkFrame(body, corner_radius=self.px(10))
+        prop.grid(row=0, column=1, sticky="nsew", padx=(self.px(4), 0))
+        prop.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(prop, text="BALING-BALING  ·  ESTIMASI dari throttle PWM "
+                                f"(KV={MOTOR_KV:.0f}, V={BATTERY_V})",
+                     font=self.F(9, True), text_color=COLOR_WARN).grid(
+            row=0, column=0, pady=(self.px(6), self.px(2)))
+        self.gauge_left  = self._gauge(prop, 0, "KIRI", row=1)
+        self.gauge_right = self._gauge(prop, 0, "KANAN", row=2)
+
+        # --- aksi besar: berhenti & kembali ---
+        act = ctk.CTkFrame(pg, fg_color="transparent")
+        act.grid(row=2, column=0, sticky="ew")
+        act.grid_columnconfigure(0, weight=3)
+        act.grid_columnconfigure(1, weight=1)
+        ctk.CTkButton(act, text="■   HENTIKAN  (STOP)", height=self.px(50),
+                      font=self.F(16, True), fg_color=COLOR_BAD,
+                      hover_color="#c0392b", command=self._on_stop).grid(
+            row=0, column=0, sticky="ew", padx=(0, self.px(6)))
+        ctk.CTkButton(act, text="⌂   BERANDA", height=self.px(50),
+                      font=self.F(13, True), fg_color="#34495e",
+                      hover_color="#3f5c78",
+                      command=lambda: self.show_page("BERANDA")).grid(
+            row=0, column=1, sticky="ew")
         return pg
 
-    def _gauge(self, parent, col, title):
+    def _gauge(self, parent, col, title, row=1):
         cell = ctk.CTkFrame(parent, corner_radius=self.px(8))
-        cell.grid(row=1, column=col, sticky="nsew",
-                  padx=self.px(8), pady=(0, self.px(7)))
-        cell.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(cell, text=title, font=self.F(10, True)).grid(
-            row=0, column=0, pady=(self.px(4), 0))
-        rpm = ctk.CTkLabel(cell, text="0 RPM", font=self.F(20, True),
+        cell.grid(row=row, column=col, sticky="nsew",
+                  padx=self.px(8), pady=(0, self.px(6)))
+        cell.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(cell, text=title, font=self.F(10, True),
+                     width=self.px(52)).grid(row=0, column=0, rowspan=2,
+                                             padx=self.px(6))
+        rpm = ctk.CTkLabel(cell, text="0 RPM", font=self.F(17, True),
                            text_color=COLOR_IDLE)
-        rpm.grid(row=1, column=0)
-        bar = ctk.CTkProgressBar(cell, height=self.px(10))
+        rpm.grid(row=0, column=1, sticky="w")
+        bar = ctk.CTkProgressBar(cell, height=self.px(9))
         bar.set(0)
-        bar.grid(row=2, column=0, sticky="ew", padx=self.px(16), pady=self.px(3))
+        bar.grid(row=1, column=1, sticky="ew", padx=(0, self.px(10)))
         detail = ctk.CTkLabel(cell, text="Throttle 0% · 0.00 m/s · PWM 1000µs",
                               font=self.F(9), text_color=COLOR_IDLE)
-        detail.grid(row=3, column=0, pady=(0, self.px(5)))
+        detail.grid(row=2, column=0, columnspan=2, pady=(self.px(2), self.px(5)))
         return {"rpm": rpm, "bar": bar, "detail": detail}
 
-    def _mpu_tile(self, parent, col, title):
+    def _mpu_tile(self, parent, col, title, row=2, span=1):
         cell = ctk.CTkFrame(parent, corner_radius=self.px(8))
-        cell.grid(row=2, column=col, sticky="nsew", padx=self.px(8),
-                  pady=self.px(3))
+        cell.grid(row=row, column=col, columnspan=span, sticky="nsew",
+                  padx=self.px(8), pady=self.px(3))
         cell.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(cell, text=title, font=self.F(9),
                      text_color=COLOR_IDLE).grid(row=0, column=0,
@@ -696,13 +820,11 @@ class FeederGUI(ctk.CTk):
         val.grid(row=1, column=0, pady=(0, self.px(4)))
         return val
 
-    # ==================================================================
-    # HALAMAN 5 — LOG
-    # ==================================================================
+    # ---- SETTING / LOG (catatan, auto-simpan, retensi) ----------------
 
-    def _build_page_log(self):
-        pg = ctk.CTkFrame(self.page_area, corner_radius=self.px(12))
-        pg.grid_rowconfigure(2, weight=1)
+    def _build_page_log(self, parent):
+        pg = ctk.CTkFrame(parent, corner_radius=self.px(12))
+        pg.grid_rowconfigure(3, weight=1)
         pg.grid_columnconfigure(0, weight=1)
 
         head = ctk.CTkFrame(pg, fg_color="transparent")
@@ -720,29 +842,40 @@ class FeederGUI(ctk.CTk):
         # --- auto-simpan: tiap baris langsung ditulis ke berkas TXT ---
         auto = ctk.CTkFrame(pg, fg_color="transparent")
         auto.grid(row=1, column=0, sticky="ew", padx=self.px(10),
-                  pady=(0, self.px(4)))
+                  pady=(0, self.px(2)))
         self.sw_autosave = ctk.CTkSwitch(auto, text="Auto-simpan TXT",
                                          font=self.F(11),
                                          command=self._on_toggle_autosave)
         self.sw_autosave.pack(side="left")
+        self.sw_mpu_record = ctk.CTkSwitch(
+            auto, text=f"Log MPU (tiap {MPU_LOG_INTERVAL_S:g} s)",
+            font=self.F(11), command=self._on_mpu_record)
+        self.sw_mpu_record.pack(side="left", padx=self.px(16))
         self.lbl_autosave = ctk.CTkLabel(
             auto, text="nonaktif — catatan hanya tersimpan di memori",
             font=self.F(9), text_color=COLOR_IDLE, anchor="w")
         self.lbl_autosave.pack(side="left", padx=self.px(10), fill="x",
                                expand=True)
 
+        # --- retensi: berkas lama dibuang sendiri ---
+        self.lbl_retention = ctk.CTkLabel(
+            pg, anchor="w", font=self.F(9), text_color=COLOR_IDLE,
+            text=(f"Berkas di folder {LOG_DIR_NAME}/ yang lebih tua dari "
+                  f"{LOG_RETENTION_DAYS} hari dihapus otomatis saat aplikasi "
+                  "dibuka & tiap 6 jam — kartu SD Raspberry Pi tetap lega."))
+        self.lbl_retention.grid(row=2, column=0, sticky="ew",
+                                padx=self.px(12), pady=(0, self.px(4)))
+
         self.log_box = ctk.CTkTextbox(pg, font=("Consolas", self.px(10)))
-        self.log_box.grid(row=2, column=0, sticky="nsew",
+        self.log_box.grid(row=3, column=0, sticky="nsew",
                           padx=self.px(10), pady=(0, self.px(10)))
         self.log_box.configure(state="disabled")
         return pg
 
-    # ==================================================================
-    # HALAMAN 6 — SISTEM (komponen, simulasi, keluar)
-    # ==================================================================
+    # ---- SETTING / SISTEM (komponen, mode kerja, keluar) --------------
 
-    def _build_page_system(self):
-        pg = ctk.CTkFrame(self.page_area, fg_color="transparent")
+    def _build_page_system(self, parent):
+        pg = ctk.CTkFrame(parent, fg_color="transparent")
         pg.grid_columnconfigure((0, 1), weight=1)
         pg.grid_rowconfigure(0, weight=1)
 
@@ -972,19 +1105,20 @@ class FeederGUI(ctk.CTk):
             f"Misi {p.panjang_m:g}x{p.lebar_m:g} m dimulai — {len(self.queue)} "
             f"perintah, {p.n_lanes} jalur, mulai {CORNER_LABEL[p.start_corner]}, "
             f"~{queue_duration_s(self.queue, p.speed_mps):.0f} s")
-        self.show_page("BERANDA")
+        # Dashboard terbuka SENDIRI — operator tidak perlu mencarinya di menu.
+        self.show_page("DASHBOARD")
 
     def _ready_to_move(self) -> bool:
         """Prasyarat sebelum perintah gerak apa pun dikirim."""
         if not self.motor_armed:
             messagebox.showwarning(
                 "Motor dimatikan",
-                "Nyalakan komponen Motor di halaman SISTEM terlebih dahulu.")
+                "Nyalakan komponen Motor di SETTING > SISTEM terlebih dahulu.")
             return False
         if not self.link.tx_enabled:
             messagebox.showwarning(
                 "NRF dimatikan",
-                "Aktifkan NRF24 di halaman SISTEM terlebih dahulu.")
+                "Aktifkan NRF24 di SETTING > SISTEM terlebih dahulu.")
             return False
         return True
 
@@ -1030,7 +1164,7 @@ class FeederGUI(ctk.CTk):
             messagebox.showwarning("Belum bisa dikirim", msg)
             return
         self.logger.log("MANUAL", f"Perintah manual {human}")
-        self.show_page("BERANDA")
+        self.show_page("DASHBOARD")
 
     def _on_stop(self):
         """Berhenti darurat — dapat ditekan dari halaman mana pun."""
@@ -1369,28 +1503,34 @@ class FeederGUI(ctk.CTk):
         if st.command is not None:
             self.home_cmd.configure(
                 text=f"{st.command.encode().decode()}   —   {st.command.human()}")
-            extra = f"percobaan ke-{st.attempt}" if st.attempt > 1 else ""
-            self.home_detail.configure(
-                text=f"perintah {st.index} dari {st.total}  ·  {st.label}  {extra}")
-        else:
-            self.home_cmd.configure(text=st.message or "Belum ada perintah berjalan")
-            self.home_detail.configure(
-                text=f"{st.total} perintah terkirim" if st.total else "—")
-        self.home_progress.set(st.queue_progress)
-
-        if st.running:
-            self.tile_queue.configure(text=f"{st.index} / {st.total}")
             sisa = max(0.0, queue_duration_s(self.queue[st.index:], ROBOT_SPEED_MPS)
                        if st.label == "MISI" else st.cmd_expected_s)
-            self.tile_eta.configure(text=f"{sisa:.0f} s")
+            extra = f"  ·  percobaan ke-{st.attempt}" if st.attempt > 1 else ""
+            self.home_detail.configure(
+                text=f"perintah {st.index} dari {st.total}  ·  {st.label}  ·  "
+                     f"sisa ~{sisa:.0f} s{extra}")
         else:
-            self.tile_queue.configure(
-                text=f"{len(self.queue)} siap" if self.queue else "—")
-            self.tile_eta.configure(
-                text=f"{self.plan.est_time_s:.0f} s" if self.plan else "—")
+            self.home_cmd.configure(text=st.message or "Belum ada perintah berjalan")
+            if st.total:
+                detail = f"{st.total} perintah terkirim"
+            elif self.queue and self.plan:
+                detail = (f"{len(self.queue)} perintah siap  ·  "
+                          f"perkiraan {self.plan.est_time_s:.0f} s")
+            else:
+                detail = "susun misi lewat BERANDA > MISI"
+            self.home_detail.configure(text=detail)
+        self.home_progress.set(st.queue_progress)
 
-        tel = self.link.get_telemetry()
-        self.tile_yaw.configure(text=f"{tel[2]:.0f}°" if tel else "—")
+        # Jalan pintas di BERANDA hanya masuk akal saat ada yang bisa dipantau.
+        if st.running:
+            if not self.btn_home_dash.winfo_ismapped():
+                self.btn_home_dash.pack(fill="x", padx=self.px(60),
+                                        pady=(self.px(14), self.px(16)))
+            self.home_hint.configure(text="misi sedang berjalan",
+                                     text_color=COLOR_WARN)
+        elif self.btn_home_dash.winfo_ismapped():
+            self.btn_home_dash.pack_forget()
+            self.home_hint.configure(text="pilih pekerjaan", text_color=COLOR_IDLE)
 
     def _refresh_components(self):
         self.comp_leds["nrf"].configure(
@@ -1415,7 +1555,8 @@ class FeederGUI(ctk.CTk):
                   f"Skala   : {self.S:.2f}x (acuan 800x480)\n"
                   f"Radio   : {'SIMULASI' if self.link.simulation else 'NRF24 nyata'}\n"
                   f"Log MPU : {'AKTIF' if self.mpu.log_enabled else 'nonaktif'}\n"
-                  f"Auto-TXT: {'AKTIF' if auto else 'nonaktif'}\n"
+                  f"Auto-TXT: {'AKTIF' if auto else 'nonaktif'}"
+                  f"  (retensi {LOG_RETENTION_DAYS} hari)\n"
                   f"Protokol: FW / CW / CCW / STOP  +  ON & FIN"))
 
     def _refresh_gauges(self):

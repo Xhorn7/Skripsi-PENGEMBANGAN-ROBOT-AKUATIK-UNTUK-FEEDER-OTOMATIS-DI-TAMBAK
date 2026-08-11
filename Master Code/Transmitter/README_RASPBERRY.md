@@ -5,8 +5,11 @@ Panel kontrol robot feeder akuatik. Jalankan **satu** berkas `receiverArduino.py
 
 GUI berjalan **layar penuh mengikuti ukuran layar perangkat**, dirancang untuk
 **layar sentuh 7 inci (800 × 480 px)** dengan tata letak bergaya mesin ATM:
-enam halaman bertombol besar, tombol STOP yang selalu terlihat, dan papan angka
-layar penuh sehingga bisa dioperasikan **tanpa keyboard maupun mouse**.
+tombol besar, tombol STOP yang selalu terlihat, dan papan angka layar penuh
+sehingga bisa dioperasikan **tanpa keyboard maupun mouse**.
+
+Layar pembuka hanya menawarkan **dua** pilihan — **MISI** dan **SETTING**.
+Tidak ada bilah navigasi: **DASHBOARD terbuka sendiri** begitu misi dikirim.
 
 ---
 
@@ -115,32 +118,47 @@ Saat layar penuh, tombol **Escape** atau **F11** mengembalikan ke mode jendela.
 
 ### Navigasi GUI
 
-Enam tombol di bilah bawah: **BERANDA · MISI · MANUAL · SENSOR · LOG · SISTEM**.
-Tombol **STOP** merah ada di bilah atas dan aktif dari halaman mana pun.
+Alurnya lurus, bukan menu: **BERANDA → MISI → DASHBOARD**. Tombol **‹** di kiri
+bilah atas mengembalikan ke beranda; tombol **STOP** merah di kanan aktif dari
+halaman mana pun.
 
-1. **MISI** — sentuh kolom **Panjang** / **Lebar** (papan angka terbuka), atur
+1. **BERANDA** — hanya dua tombol besar: **MISI** dan **SETTING**. Selagi ada
+   misi berjalan, muncul tombol tambahan **LIHAT DASHBOARD** untuk kembali
+   memantau.
+2. **MISI** — sentuh kolom **Panjang** / **Lebar** (papan angka terbuka), atur
    lebar lintasan, kecepatan, dan titik awal (bisa juga disentuh langsung di
    peta). Panel kanan menampilkan preview jalur dan **daftar perintah** yang
-   akan dikirim. Tekan **KIRIM MISI KE ROBOT**.
-2. **BERANDA** — pantau status: perintah yang sedang dijalankan, kemajuan
-   antrean, dan perkiraan sisa waktu. Status berpindah `MENGIRIM PERINTAH →
-   ROBOT BERGERAK → SELESAI` mengikuti sinyal `ON` dan `FIN` dari robot.
-3. **MANUAL** — kirim perintah sendiri: **MAJU dalam METER (0,1–50 m)**,
-   **PUTAR KIRI (CCW, 1–180°)**, **PUTAR KANAN (CW, 1–180°)**. Pakai tombol
-   −/+ atau **ISI ANGKA** (papan angka menerima pecahan, mis. `2.5`), lalu
-   **KIRIM**. Jarak meter otomatis dipecah menjadi beberapa paket `FW` 10–200 cm
-   sesuai protokol; jumlah paketnya diperlihatkan di bawah angka.
-4. **SENSOR** — gauge baling-baling dan sudut MPU. **Tidak ada pengaturan port:**
-   sudut MPU ikut telemetri NRF dan mengalir sendiri di latar belakang selama
-   heartbeat hidup. Saklar **Log MPU** menyalakan pencatatan sudut ke log
-   (satu baris per detik).
-5. **LOG** — seluruh siklus protokol terekam. Saklar **Auto-simpan TXT** membuat
-   berkas `logs/log_feeder_<tanggal>_<jam>.txt` dan menulis tiap baris begitu
-   terjadi, jadi catatan uji lapangan tetap utuh walau aplikasi ditutup paksa
-   atau Pi kehilangan daya. **Export CSV / TXT** tetap tersedia untuk simpan
-   sekali jalan.
-6. **SISTEM** — saklar NRF / Heartbeat / Motor, pemilih **MODE KERJA**
-   (SIMULASI/REAL), status log MPU & auto-simpan, info layar, keluar.
+   akan dikirim. Tekan **KIRIM MISI KE ROBOT** — aplikasi langsung berpindah ke
+   DASHBOARD.
+3. **DASHBOARD** — layar pemantauan selagi robot bekerja: status (`MENGIRIM
+   PERINTAH → ROBOT BERGERAK → SELESAI` mengikuti sinyal `ON`/`FIN`), perintah
+   yang sedang dijalankan, kemajuan antrean & sisa waktu, **koordinat sudut MPU
+   (Roll/Pitch/Yaw)** yang dikirim robot, gauge baling-baling, serta tombol
+   **HENTIKAN (STOP)** berukuran besar.
+4. **SETTING** — tiga sub-halaman yang dipilih lewat pemilih di puncak layar:
+   - **SISTEM** — saklar NRF / Heartbeat / Motor, pemilih **MODE KERJA**
+     (SIMULASI/REAL), indikator monitor, info layar, tombol keluar.
+   - **MANUAL** — kirim perintah sendiri: **MAJU dalam METER (0,1–50 m)**,
+     **PUTAR KIRI (CCW, 1–180°)**, **PUTAR KANAN (CW, 1–180°)**. Pakai tombol
+     −/+ atau **ISI ANGKA** (papan angka menerima pecahan, mis. `2.5`), lalu
+     **KIRIM** — layar juga berpindah ke DASHBOARD. Jarak meter otomatis
+     dipecah menjadi beberapa paket `FW` 10–200 cm sesuai protokol; jumlah
+     paketnya diperlihatkan di bawah angka.
+   - **LOG** — catatan realtime seluruh siklus protokol, saklar **Auto-simpan
+     TXT** dan **Log MPU** (keduanya **sudah menyala sejak aplikasi dibuka**),
+     serta **Export CSV / TXT** untuk simpan sekali jalan.
+
+> **Sudut MPU tidak punya pengaturan port** — datanya ikut telemetri NRF dan
+> mengalir sendiri di latar belakang selama heartbeat hidup.
+
+### Berkas log & pembersihan otomatis
+
+Sejak aplikasi dibuka, setiap kejadian (termasuk sudut MPU, satu baris per
+detik) ditulis ke `logs/log_feeder_<tanggal>_<jam>.txt` **begitu terjadi**, jadi
+catatan uji lapangan tetap utuh walau aplikasi ditutup paksa atau Pi kehilangan
+daya. Berkas dalam folder itu yang **lebih tua dari 3 hari dihapus otomatis**
+saat aplikasi dibuka dan tiap 6 jam sesudahnya, supaya kartu SD Raspberry Pi
+tidak penuh. Berkas yang sedang ditulis tidak pernah ikut terhapus.
 
 ---
 
@@ -152,7 +170,8 @@ Tombol **STOP** merah ada di bilah atas dan aktif dari halaman mana pun.
 | Ingin memakai NRF nyata | Mode awal memang SIMULASI. Sentuh tombol **MODE** di bilah atas, atau jalankan `./run.sh --real`. |
 | Tombol MODE menolak pindah ke REAL | pyrf24 gagal / SPI belum aktif / wiring salah — pesannya muncul di dialog & log. Cek `ls /dev/spidev*` harus ada. |
 | ROBOT = TERPUTUS terus | Robot belum menyala/listening, channel/address beda, atau NRF kurang daya (kapasitor 3.3V). |
-| MPU kosong / "menunggu telemetri robot" | Robot belum mengirim telemetri. Pastikan **Heartbeat PING** menyala (halaman SISTEM), robot hidup, dan firmware mengirim `R=..;P=..;Y=..`. |
+| MPU kosong / "menunggu telemetri robot" | Robot belum mengirim telemetri. Pastikan **Heartbeat PING** menyala (SETTING > SISTEM), robot hidup, dan firmware mengirim `R=..;P=..;Y=..`. |
+| Log lama hilang sendiri | Memang disengaja: berkas > 3 hari dibuang otomatis. Salin dulu lewat **Export CSV/TXT** bila ingin disimpan lama. |
 | Auto-simpan berhenti sendiri | Berkas gagal ditulis (kartu SD penuh / read-only). Sebabnya tampil di samping saklar; perbaiki lalu nyalakan lagi. |
 | `ModuleNotFoundError: customtkinter` | venv belum diaktifkan / `pip install -r requirements.txt` belum jalan. |
 
@@ -184,4 +203,4 @@ Ganti `/home/pi/feeder/` sesuai lokasi foldermu.
 | `setup_pi.sh` | Skrip instalasi otomatis (jalankan sekali) |
 | `run.sh` | Launcher (aktifkan venv + jalankan) |
 | `Dokumentasi_GUI_Feeder_SDLC.pdf` | Dokumentasi lengkap (metode SDLC) |
-| `logs/` | Berkas auto-simpan TXT (dibuat sendiri saat saklar dinyalakan) |
+| `logs/` | Berkas auto-simpan TXT (dibuat otomatis; isi > 3 hari dihapus sendiri) |

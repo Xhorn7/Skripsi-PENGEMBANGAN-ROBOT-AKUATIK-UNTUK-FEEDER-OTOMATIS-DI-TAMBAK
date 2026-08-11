@@ -39,13 +39,14 @@ flowchart TB
 
 ## 2. Flowchart Pengendali Utama (Transmitter)
 
-Alur aplikasi GUI. Operasi penuh lewat **layar sentuh** (papan angka di layar), tanpa keyboard fisik.
+Alur aplikasi GUI. Operasi penuh lewat **layar sentuh** (papan angka di layar), tanpa keyboard fisik. Tidak ada bilah navigasi: layar pembuka hanya menawarkan **MISI** dan **SETTING**, dan **DASHBOARD terbuka sendiri** begitu misi dikirim.
 
 ```mermaid
 flowchart TD
     START([▶ START GUI]) --> SCR["Ambil ukuran layar perangkat<br/>skala = min(W/800, H/480)"]
     SCR --> SIM["Mode awal SIMULASI<br/>MockRadio (robot virtual)"]
-    SIM --> HOME[Halaman BERANDA]
+    SIM --> LOGINIT["Hapus log > 3 hari<br/>nyalakan auto-simpan TXT<br/>+ log MPU"]
+    LOGINIT --> HOME["Halaman BERANDA<br/>hanya 2 tombol: MISI · SETTING"]
 
     HOME --> PICK{Operator<br/>pilih apa?}
 
@@ -66,7 +67,7 @@ flowchart TD
     SENDBTN -- Belum --> INPUT
     SENDBTN -- Ya --> RUN
 
-    PICK -- MANUAL --> MAN[/"Maju (meter) atau<br/>CW / CCW (derajat)<br/>+ isi nilai"/]
+    PICK -- "SETTING › MANUAL" --> MAN[/"Maju (meter) atau<br/>CW / CCW (derajat)<br/>+ isi nilai"/]
     MAN --> VAL{Nilai dalam<br/>rentang sah?}
     VAL -- Tidak --> REJECT[Tolak + tampilkan<br/>rentang yang benar]
     REJECT --> MAN
@@ -74,20 +75,23 @@ flowchart TD
     SPLITM --> RUN
     VAL -- "Ya, putar" --> RUN
 
-    RUN["CommandRunner.run(antrean)"] --> CYCLE[Siklus Request-Response<br/>per perintah - lihat diagram 4]
+    RUN["CommandRunner.run(antrean)"] --> DASH["DASHBOARD terbuka OTOMATIS<br/>status · sudut MPU · STOP"]
+    DASH --> CYCLE[Siklus Request-Response<br/>per perintah - lihat diagram 4]
     CYCLE --> NEXT{Masih ada<br/>perintah?}
     NEXT -- Ya --> CYCLE
     NEXT -- Tidak --> DONE([✅ SELESAI])
     DONE --> HOME
 
     PICK -- STOP --> SSTOP["Kirim STOP:0 berulang<br/>batalkan sisa antrean"]
-    SSTOP --> HOME
+    SSTOP --> DASH
 
-    PICK -- "SENSOR / LOG" --> TOG["Saklar Log MPU<br/>& Auto-simpan TXT"]
+    PICK -- "SETTING › SISTEM / LOG" --> TOG["Saklar komponen & mode<br/>lihat catatan + saklar log"]
     TOG --> HOME
 ```
 
-> Tombol **STOP** ada di bilah atas sehingga dapat ditekan dari halaman mana pun, termasuk saat antrean sedang berjalan.
+> Tombol **STOP** ada di bilah atas sehingga dapat ditekan dari halaman mana pun, termasuk saat antrean sedang berjalan; DASHBOARD juga punya tombol **HENTIKAN** berukuran besar.
+>
+> **Logging menyala sejak start.** Auto-simpan TXT dan log MPU tidak perlu dinyalakan operator, dan berkas di folder `logs/` yang lebih tua dari **3 hari** dihapus otomatis (saat start dan tiap 6 jam) supaya kartu SD Raspberry Pi tidak penuh.
 >
 > **Mode awal selalu SIMULASI**; perpindahan ke REAL adalah keputusan sadar operator lewat chip **MODE** (atau flag `--real`), dan ditolak selagi ada perintah berjalan. Sementara itu sudut MPU mengalir sendiri dari telemetri NRF di latar belakang — **tanpa port serial** — dan saklar **Log MPU** / **Auto-simpan TXT** menentukan apakah ikut dicatat ke berkas.
 

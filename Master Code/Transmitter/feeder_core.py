@@ -26,7 +26,9 @@ Kelas & fungsi utama:
                           tunggu "ON" (kirim ulang bila lewat 1 detik), tunggu
                           "FIN", lanjut perintah berikutnya.
     5. ActivityLogger  -> catat semua aktivitas, export ke CSV/TXT, dan
-                          AUTO-SIMPAN tiap baris ke berkas TXT (opsional).
+                          AUTO-SIMPAN tiap baris ke berkas TXT. Berkas log yang
+                          lebih tua dari LOG_RETENTION_DAYS dibuang otomatis
+                          (purge_old_logs) supaya kartu SD Raspberry Pi aman.
 
 CATATAN KEJUJURAN TEKNIS:
     Nilai RPM & kecepatan pada gauge adalah ESTIMASI dari PWM throttle yang
@@ -1028,6 +1030,12 @@ class CommandRunner:
 LOG_DIR_NAME = "logs"      # folder auto-simpan, dibuat di samping berkas kode
 LOG_HEADER = "=== LOG AKTIVITAS ROBOT FEEDER AKUATIK ==="
 
+# Berkas log lebih tua dari ini dibuang otomatis. Raspberry Pi memakai kartu SD
+# berkapasitas terbatas dan log MPU menulis ~1 baris/detik, jadi tanpa
+# pembersihan folder logs/ akan menggelembung tanpa batas.
+LOG_RETENTION_DAYS = 3
+LOG_PURGE_INTERVAL_S = 6 * 3600     # jeda pemeriksaan ulang selagi aplikasi hidup
+
 
 def default_log_dir() -> str:
     """Folder tujuan auto-simpan; dibuat bila belum ada."""
@@ -1040,6 +1048,41 @@ def default_log_path(prefix: str = "log_feeder") -> str:
     """Nama berkas auto-simpan bercap waktu, mis. logs/log_feeder_20260810_143000.txt"""
     return os.path.join(default_log_dir(),
                         f"{prefix}_{datetime.now():%Y%m%d_%H%M%S}.txt")
+
+
+def purge_old_logs(days: int = LOG_RETENTION_DAYS,
+                   directory: str | None = None,
+                   keep: str | None = None) -> tuple[list[str], list[str]]:
+    """
+    Hapus berkas .txt di folder log yang umurnya melebihi `days` hari.
+
+    keep = berkas yang sedang ditulis (jangan pernah dihapus, sekalipun jam
+    sistem melompat). Return (nama berkas terhapus, pesan kegagalan) — pemanggil
+    yang memutuskan cara melaporkannya.
+    """
+    base = directory or default_log_dir()
+    batas = time.time() - max(0, days) * 86400.0
+    terhapus: list[str] = []
+    gagal: list[str] = []
+    try:
+        isi = os.listdir(base)
+    except OSError as e:
+        return terhapus, [f"folder log tak terbaca: {e}"]
+
+    keep_abs = os.path.abspath(keep) if keep else None
+    for nama in isi:
+        if not nama.lower().endswith(".txt"):
+            continue
+        path = os.path.join(base, nama)
+        if keep_abs and os.path.abspath(path) == keep_abs:
+            continue
+        try:
+            if os.path.isfile(path) and os.path.getmtime(path) < batas:
+                os.remove(path)
+                terhapus.append(nama)
+        except OSError as e:
+            gagal.append(f"{nama}: {e}")
+    return terhapus, gagal
 
 
 @dataclass
@@ -1406,8 +1449,22 @@ if __name__ == "__main__":
     ok, msg = log.set_autosave(None)
     log.log("STATUS", "setelah auto-simpan mati")
     assert "setelah auto-simpan mati" not in open(auto_path, encoding="utf-8").read()
-    os.remove(auto_path)
     print(f"  [OK] {len(log.events)} event tercatat, berkas TXT terisi realtime")
+
+    # ---- Pembersihan berkas log lama (jaga kartu SD Raspberry Pi) ----
+    print(f"\n== Retensi log {LOG_RETENTION_DAYS} hari ==")
+    lama = os.path.join(default_log_dir(), "selftest_lama.txt")
+    with open(lama, "w", encoding="utf-8") as f:
+        f.write("berkas uji berumur 5 hari\n")
+    tua = time.time() - 5 * 86400
+    os.utime(lama, (tua, tua))                       # pura-pura berumur 5 hari
+    terhapus, gagal = purge_old_logs(keep=auto_path)
+    print(f"  terhapus: {terhapus}  gagal: {gagal}")
+    assert "selftest_lama.txt" in terhapus, "berkas 5 hari harus dibuang"
+    assert os.path.exists(auto_path), "berkas hari ini TIDAK boleh ikut terhapus"
+    assert not gagal, gagal
+    os.remove(auto_path)
+    print("  [OK] berkas > 3 hari dibuang, berkas baru & yang sedang dipakai aman")
 
     # ---- Pindah mode REAL <-> SIMULASI ----
     print("\n== Tombol MODE (REAL / SIMULASI) ==")

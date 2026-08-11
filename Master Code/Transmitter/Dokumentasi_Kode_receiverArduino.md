@@ -19,7 +19,7 @@ Dokumen ini menjelaskan berkas **`receiverArduino.py`**, yaitu **satu-satunya ti
 Ditambah satu saklar yang berlaku untuk semua mode: **`--real`**. Tanpa flag itu
 aplikasi **selalu mulai di mode SIMULASI** (robot virtual) — pilihan yang aman
 untuk latihan & demo — dan operator memindahkannya ke NRF sungguhan lewat tombol
-**MODE** di bilah atas GUI, pemilih **MODE KERJA** di halaman SISTEM, atau
+**MODE** di bilah atas GUI, pemilih **MODE KERJA** di SETTING > SISTEM, atau
 perintah `MODE real` di CLI.
 
 Filosofi desainnya: **logika inti tidak ditulis di sini**. Berkas ini hanya memilih mode lalu mendelegasikan pekerjaan ke modul lain:
@@ -78,6 +78,8 @@ except ImportError as e:
 ```
 
 > **Catatan pemasangan (penting di Windows/PC dengan banyak Python):** pesan `customtkinter belum terpasang` muncul bila paket terpasang di interpreter Python yang **berbeda** dari yang menjalankan skrip. Pastikan memasang ke interpreter yang sama, mis. `& "C:\path\ke\python.exe" -m pip install customtkinter`. Di PC (tanpa NRF), `pyrf24` boleh dilewati — GUI memang mulai di **mode simulasi**.
+
+**Tentang alur halaman.** GUI tidak lagi memakai bilah navigasi enam tombol. Layar pembuka hanya menawarkan **MISI** dan **SETTING**; **DASHBOARD** — layar pemantauan berisi status, koordinat sudut MPU, gauge, dan tombol STOP besar — **terbuka sendiri** begitu misi atau perintah manual dikirim, karena itulah yang ingin dilihat operator saat itu. Halaman MANUAL, LOG, dan SISTEM berkumpul sebagai sub-halaman **SETTING**.
 
 **Tentang layar penuh.** GUI mengambil resolusi layar perangkat dan berjalan tanpa bilah judul, dirancang untuk layar sentuh 7 inci (800 × 480 px). Tombol **Escape** atau **F11** mengembalikannya ke mode jendela — berguna saat pengembangan di PC. Untuk langsung memulai dalam jendela, pakai `--windowed`.
 
@@ -188,12 +190,12 @@ Bila `ON` tidak datang dalam 1 detik, `CommandRunner` menganggap perintah gagal 
 | Berkas | Isi utama | Tanggung jawab |
 |---|---|---|
 | **`receiverArduino.py`** | `run_gui`, `run_cli`, `main` | Entry point & pemilihan mode |
-| **`feeder_gui.py`** | kelas `FeederGUI` | Presentasi: enam halaman bergaya ATM, papan angka, preview jalur, gauge, LED, tampilan log |
+| **`feeder_gui.py`** | kelas `FeederGUI` | Presentasi bergaya ATM: beranda 2 tombol, halaman MISI, DASHBOARD otomatis, SETTING (SISTEM/MANUAL/LOG), papan angka, preview jalur, gauge, LED, tampilan log |
 | **`feeder_core.py`** | `RobotCommand` | Satu paket `[Moves]:[Dist]` + validasi rentang sesuai tabel perintah |
 | | `RadioLink` | Abstraksi NRF24 (`pyrf24`) + `MockRadio` (simulasi); merutekan `ON`/`FIN`/telemetri |
 | | `plan_coverage()` / `plan_command_queue()` | Tambak persegi + titik awal + lebar lintasan → segmen "maju/belok" → antrean perintah FW/CW/CCW |
 | | `CommandRunner` | Pelaksana Request-Response: kirim, tunggu `ON` (kirim ulang bila lewat 1 detik), tunggu `FIN`, lanjut |
-| | `ActivityLogger` | Pencatatan aktivitas berstempel waktu, ekspor CSV/TXT, dan **auto-simpan** tiap baris ke berkas TXT |
+| | `ActivityLogger` + `purge_old_logs()` | Pencatatan aktivitas berstempel waktu, ekspor CSV/TXT, **auto-simpan** tiap baris ke berkas TXT, dan pembuangan berkas log yang lebih tua dari 3 hari |
 | | `MPUMonitor` | Ambil sudut MPU (roll/pitch/yaw) dari telemetri NRF di latar belakang + catat ke log bila diminta |
 
 > **Perbedaan GUI vs CLI.** Keduanya memakai protokol dan komponen inti yang sama. GUI menambahkan: papan angka layar sentuh, input titik awal / lebar lintasan / kecepatan, preview jalur pada kanvas, gauge telemetri, panel sensor MPU, dan ekspor log. CLI hanya mengirim perintah dan mencetak kejadian.
