@@ -26,7 +26,7 @@ Protokol mengikuti **Dokumen Spesifikasi Teknis — Robot Akuatik untuk Tambak I
 - **Perencanaan jalur (path planning):** dari dimensi tambak + titik awal + lebar lintasan + kecepatan → daftar segmen *maju/belok* (pola *boustrophedon*/zigzag) → **antrean perintah** `FW`/`CW`/`CCW`.
 - **Preview jalur:** kanvas peta tambak + daftar perintah yang akan dikirim, sebelum misi dijalankan.
 - **Kendali manual:** maju diisi dalam **meter** (0,1–50 m) lalu dipecah otomatis jadi paket `FW` 10–200 cm; putar `CW` / `CCW` (1–180°), plus `STOP` darurat.
-- **GUI mengikuti ukuran layar:** dirancang untuk **layar sentuh 7 inci** (800 × 480) bergaya mesin ATM — enam halaman bertombol besar, tombol STOP selalu terlihat, papan angka layar penuh. Operasi penuh **tanpa keyboard fisik**.
+- **GUI mengikuti ukuran layar:** dirancang untuk **layar sentuh 7 inci** (800 × 480) bergaya mesin ATM. Beranda hanya menawarkan **MISI** dan **SETTING**; **dashboard terbuka sendiri** begitu misi dikirim (status, koordinat MPU, STOP besar). Papan angka layar penuh — operasi penuh **tanpa keyboard fisik**.
 - **Request-Response dengan pengiriman ulang:** bila `ON [Moves]` tak diterima dalam 1 detik, perintah dikirim ulang (maks 5×).
 - **Heading-hold proporsional:** robot berjalan lurus dengan koreksi arah dari MPU6050 (Kp × error).
 - **Putaran closed-loop:** sudut `CW`/`CCW` ditutup memakai umpan balik yaw MPU — tanpa kalibrasi durasi belok.
@@ -34,8 +34,8 @@ Protokol mengikuti **Dokumen Spesifikasi Teknis — Robot Akuatik untuk Tambak I
 - **Failsafe heartbeat:** robot berhenti otomatis bila sinyal Pengendali Utama hilang > 3 detik.
 - **Telemetri MPU 2 arah (radio):** robot mengirim balik roll/pitch/yaw lewat NRF — **tanpa port serial sama sekali**. Sudut mengalir di latar belakang selama heartbeat hidup; saklar **Log MPU** menyalakan pencatatannya.
 - **Telemetri estimasi:** RPM/kecepatan diperkirakan dari PWM perintah yang sedang berjalan (robot belum punya sensor RPM).
-- **Logging:** semua aktivitas tercatat; saklar **auto-simpan TXT** menulis tiap baris ke `logs/log_feeder_*.txt` begitu terjadi (aman bila aplikasi/daya mati), selain ekspor CSV/TXT sekali jalan.
-- **Mode REAL/SIMULASI dapat dipindah:** aplikasi **selalu mulai di SIMULASI** (robot tiruan membalas `ON`/`FIN` + telemetri MPU), lalu operator memindahkannya ke NRF sungguhan lewat chip **MODE** di bilah atas, pemilih di halaman SISTEM, atau flag `--real`.
+- **Logging:** **menyala sejak aplikasi dibuka** — tiap kejadian (termasuk sudut MPU) langsung ditulis ke `logs/log_feeder_*.txt`, dan berkas **> 3 hari dihapus otomatis** supaya kartu SD Raspberry Pi tidak penuh. Ekspor CSV/TXT sekali jalan tetap ada.
+- **Mode REAL/SIMULASI dapat dipindah:** aplikasi **selalu mulai di SIMULASI** (robot tiruan membalas `ON`/`FIN` + telemetri MPU), lalu operator memindahkannya ke NRF sungguhan lewat chip **MODE** di bilah atas, pemilih di SETTING > SISTEM, atau flag `--real`.
 
 ---
 
@@ -141,11 +141,11 @@ python receiverArduino.py --real            # langsung memakai NRF sungguhan
 python receiverArduino.py --cli             # mode teks
 ```
 
-GUI **selalu terbuka di mode SIMULASI** — aman untuk latihan & demo. Pindah ke NRF sungguhan dengan menyentuh chip **MODE** di bilah atas, memilih **REAL** pada halaman SISTEM, atau menjalankan dengan `--real`; perpindahan ditolak selagi ada perintah berjalan. Kendali nyata butuh Raspberry Pi (`pyrf24`) dengan sesi Desktop (HDMI/VNC), lihat `setup_pi.sh`. Saat layar penuh, **Escape** atau **F11** mengembalikan ke mode jendela.
+GUI **selalu terbuka di mode SIMULASI** — aman untuk latihan & demo. Pindah ke NRF sungguhan dengan menyentuh chip **MODE** di bilah atas, memilih **REAL** pada SETTING > SISTEM, atau menjalankan dengan `--real`; perpindahan ditolak selagi ada perintah berjalan. Kendali nyata butuh Raspberry Pi (`pyrf24`) dengan sesi Desktop (HDMI/VNC), lihat `setup_pi.sh`. Saat layar penuh, **Escape** atau **F11** mengembalikan ke mode jendela.
 
 ![Antarmuka GUI](Master%20Code/Transmitter/gui_screenshot.png)
 
-Navigasi: **BERANDA · MISI · MANUAL · SENSOR · LOG · SISTEM**, dengan tombol STOP merah di bilah atas yang aktif dari halaman mana pun.
+Alur: **BERANDA** (MISI · SETTING) → **MISI** (ukur tambak, preview jalur) → **DASHBOARD** (terbuka otomatis: status, koordinat MPU, STOP). **SETTING** memuat SISTEM · MANUAL · LOG. Tombol STOP merah di bilah atas aktif dari halaman mana pun.
 
 ### Firmware Robot (ESP32)
 

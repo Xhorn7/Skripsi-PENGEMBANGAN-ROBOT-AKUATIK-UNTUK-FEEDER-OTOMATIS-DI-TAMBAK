@@ -182,8 +182,11 @@ bullets([
     "Menampilkan data sensor MPU (roll, pitch, yaw/heading) secara nyata &mdash; "
     "<b>dikirim robot lewat radio, tanpa port serial</b> &mdash; berjalan di latar "
     "belakang dengan saklar nyala/mati pencatatannya.",
-    "Mencatat seluruh aktivitas, <b>menyimpannya otomatis ke berkas TXT</b> selama "
-    "operasi, serta mengekspornya sebagai CSV/TXT.",
+    "Mencatat seluruh aktivitas, <b>menyimpannya otomatis ke berkas TXT sejak "
+    "aplikasi dibuka</b>, membuang berkas yang lebih tua dari 3 hari, serta "
+    "mengekspornya sebagai CSV/TXT.",
+    "Menuntun operator lewat <b>alur kerja</b> (BERANDA &rarr; MISI &rarr; DASHBOARD) "
+    "alih-alih menyodorkan menu berisi enam halaman.",
     "Memberi operator <b>pilihan mode kerja REAL atau SIMULASI</b> yang dapat dipindah "
     "kapan saja, dengan SIMULASI sebagai keadaan awal yang aman.",
 ])
@@ -300,7 +303,15 @@ table(["Kode", "Kebutuhan", "Status"],
        ["RF-20", "Saklar <b>auto-simpan log ke berkas TXT</b> selama operasi berjalan",
         "Terpenuhi"],
        ["RF-21", "Pemilihan <b>mode kerja REAL/SIMULASI</b> saat aplikasi berjalan "
-        "(default SIMULASI)", "Terpenuhi"]],
+        "(default SIMULASI)", "Terpenuhi"],
+       ["RF-22", "Layar pembuka hanya berisi <b>MISI</b> &amp; <b>SETTING</b>; "
+        "DASHBOARD terbuka otomatis sesudah misi dikirim", "Terpenuhi"],
+       ["RF-23", "DASHBOARD menampilkan <b>koordinat sudut MPU</b> robot berjalan "
+        "beserta tombol berhenti berukuran besar", "Terpenuhi"],
+       ["RF-24", "Auto-simpan log <b>menyala sejak aplikasi dibuka</b> (tanpa perlu "
+        "dinyalakan operator)", "Terpenuhi"],
+       ["RF-25", "Berkas log lebih tua dari <b>3 hari dihapus otomatis</b> agar kartu "
+        "SD Raspberry Pi tidak penuh", "Terpenuhi"]],
       [1.7 * cm, 10.3 * cm, 3 * cm])
 h2("3.2 Kebutuhan Non-Fungsional")
 bullets([
@@ -312,6 +323,9 @@ bullets([
     "selagi ada perintah berjalan.",
     "<b>Ketahanan catatan:</b> auto-simpan menulis tiap baris log begitu terjadi, "
     "sehingga data uji lapangan tidak hilang bila aplikasi ditutup paksa atau daya mati.",
+    "<b>Hemat penyimpanan:</b> log MPU menulis sekitar satu baris per detik, maka "
+    "berkas berumur lebih dari 3 hari dibuang otomatis &mdash; kartu SD Raspberry Pi "
+    "tidak menggelembung walau alat dipakai berhari-hari.",
     "<b>Usability:</b> indikator warna (hijau/oranye/merah), label satuan jelas, serta "
     "<b>operasi penuh lewat sentuhan</b> (keypad di layar + preview jalur) tanpa keyboard/mouse.",
     "<b>Kejujuran data:</b> nilai estimasi diberi label eksplisit agar tidak menyesatkan.",
@@ -472,6 +486,20 @@ p("Bila penulisan gagal di tengah operasi (kartu penuh, media hanya-baca), auto-
   "dimatikan sendiri dengan sebabnya disimpan; GUI menarik keadaan itu tiap tick lalu "
   "mengembalikan saklar ke posisi mati dan menampilkan alasannya — sehingga tidak ada "
   "layar yang mengaku &apos;aktif&apos; padahal tidak ada yang tersimpan.")
+p("<b>Menyala sejak start &amp; membersihkan diri.</b> Menuruti arahan pembimbing, "
+  "pencatatan tidak lagi menunggu ditekan: begitu aplikasi dibuka, auto-simpan TXT dan "
+  "log MPU langsung aktif, sehingga setiap uji lapangan pasti meninggalkan berkas. "
+  "Konsekuensinya folder log tumbuh terus &mdash; log MPU saja menulis sekitar satu baris "
+  "per detik &mdash; maka <b>purge_old_logs()</b> membuang berkas yang lebih tua dari "
+  "<b>LOG_RETENTION_DAYS = 3 hari</b> saat aplikasi dibuka dan mengulangnya tiap 6 jam "
+  "selagi aplikasi hidup. Berkas yang <i>sedang</i> ditulis selalu dikecualikan, sehingga "
+  "sesi berjalan tidak mungkin ikut terhapus walau jam sistem Raspberry Pi melompat "
+  "(kejadian lumrah pada papan tanpa RTC).")
+code("start aplikasi\n"
+     "   -> purge_old_logs(): hapus logs/*.txt umur &gt; 3 hari\n"
+     "   -> set_autosave(logs/log_feeder_&lt;tgl&gt;_&lt;jam&gt;.txt)\n"
+     "   -> MPUMonitor.set_logging(True)\n"
+     "   -> ulangi pemeriksaan retensi tiap 6 jam")
 
 h2("4.7 Perencanaan Jalur &amp; Penyusunan Antrean Perintah")
 p("Fungsi <b>plan_coverage()</b> menerjemahkan tambak persegi menjadi jalur sapuan "
@@ -507,8 +535,9 @@ p("<b>Pola belok berselang-seling.</b> U-turn yang <b>selalu belok kanan</b> sec
 note("Titik awal dapat dipilih lewat menu atau <b>disentuh langsung pada kanvas peta</b>; "
      "arah belok pertama dihitung dari titik awal agar robot menyapu ke arah dalam tambak.")
 
-h2("4.8 Rancangan Antarmuka Mengikuti Layar Perangkat")
-p("Menindaklanjuti umpan balik pembimbing, tata letak dirancang ulang agar "
+h2("4.8 Rancangan Antarmuka: Alur Kerja, Bukan Menu")
+p("Menindaklanjuti umpan balik pembimbing (dua putaran evaluasi), tata letak dirancang "
+  "ulang agar "
   "<b>mengikuti ukuran layar perangkat</b> dan nyaman disentuh pada "
   "<b>layar sentuh 7 inci</b> (800 &times; 480 piksel) &mdash; dengan gaya "
   "<b>mesin ATM</b>: minimalis, target sentuh besar, satu layar untuk satu tugas, "
@@ -519,54 +548,78 @@ bullets([
     "tinggi tombol, dan jarak antar elemen dikalikan faktor skala "
     "<i>S = min(lebar/800, tinggi/480)</i> yang dijepit pada rentang 0,85&ndash;2,0 "
     "sehingga tampilan tetap proporsional di layar 7 inci maupun monitor besar.",
-    "<b>Pemecahan menjadi halaman.</b> Panel yang sebelumnya menumpuk dalam satu layar "
-    "padat dipecah menjadi enam halaman dengan navigasi tombol besar di bagian bawah.",
+    "<b>Dari menu enam tombol menjadi alur.</b> Iterasi sebelumnya memakai bilah "
+    "navigasi berisi enam halaman. Umpan balik pembimbing: operator tidak perlu memilih "
+    "&quot;mau ke halaman mana&quot; &mdash; ia hanya punya dua urusan, yaitu "
+    "<b>menjalankan misi</b> atau <b>mengatur alat</b>. Bilah navigasi karena itu "
+    "DIHAPUS: beranda menyisakan dua tombol besar (MISI &amp; SETTING), dan "
+    "<b>DASHBOARD terbuka sendiri</b> begitu misi dikirim karena itulah yang ingin "
+    "dilihat operator pada saat itu.",
+    "<b>Tidak ada fitur yang hilang.</b> Halaman MANUAL, LOG, dan SISTEM berkumpul "
+    "sebagai tiga sub-halaman SETTING yang dipilih lewat satu pemilih segmen; halaman "
+    "SENSOR melebur ke DASHBOARD karena isinya memang untuk dipantau saat robot bergerak.",
+    "<b>Satu jalan pulang.</b> Tombol &lsquo;&lsaquo;&rsquo; di kiri bilah status "
+    "menggantikan seluruh bilah navigasi &mdash; disembunyikan di BERANDA karena di "
+    "sana tidak ada tempat untuk kembali.",
     "<b>Tombol STOP permanen.</b> Berhenti darurat diletakkan di bilah status atas "
     "sehingga <b>selalu terlihat dan terjangkau dari halaman mana pun</b>.",
     "<b>Papan angka sebagai lapisan penuh.</b> Menyentuh sebuah kolom membuka papan "
     "angka satu layar penuh dengan tombol besar dan tombol OK / HAPUS / BATAL, "
     "sehingga halaman tetap lega tanpa kehilangan kemampuan input tanpa keyboard.",
 ])
-code("+--------------------------------------------------+\n"
-     "|  judul       [MODE*][NRF][ROBOT]      [ STOP ]   |  bilah status\n"
+code("BERANDA              MISI                    DASHBOARD (berjalan)\n"
+     "+-----------+  -&gt;  +---------------+  -&gt;  +-------------------+\n"
+     "|   MISI    |      | ukuran tambak |      | status + progres  |\n"
+     "+-----------+      | preview jalur |      | sudut MPU (real)  |\n"
+     "|  SETTING  |      | [KIRIM MISI]  |      | [ HENTIKAN/STOP ] |\n"
+     "+-----------+      +---------------+      +-------------------+\n"
+     "\n"
      "+--------------------------------------------------+\n"
-     "|                                                  |\n"
+     "| [&lt;]  judul   [MODE*][NRF][ROBOT]      [ STOP ]   |  bilah status\n"
+     "+--------------------------------------------------+\n"
      "|                  ISI HALAMAN                     |\n"
-     "|                                                  |\n"
-     "+--------------------------------------------------+\n"
-     "| BERANDA | MISI | MANUAL | SENSOR | LOG | SISTEM  |  navigasi\n"
      "+--------------------------------------------------+\n"
      "   * chip MODE dapat disentuh: REAL &lt;-&gt; SIMULASI")
 table(["Halaman", "Isi"],
-      [["BERANDA", "Status robot, perintah yang sedang berjalan, kemajuan antrean, "
-        "perkiraan waktu, arah hadap; tombol besar menuju MISI &amp; MANUAL."],
+      [["BERANDA", "Dua tombol besar: <b>MISI</b> dan <b>SETTING</b>. Selagi ada misi "
+        "berjalan muncul jalan pintas <b>LIHAT DASHBOARD</b>."],
        ["MISI", "Panjang, lebar, lebar lintasan, kecepatan, titik awal; preview jalur "
-        "pada kanvas; daftar antrean perintah; tombol KIRIM MISI."],
-       ["MANUAL", "Maju dalam <b>meter</b> + putar kiri/kanan dalam derajat: nilai "
-        "besar, tombol &minus;/+, papan angka, penunjuk jumlah paket FW, dan tombol "
-        "KIRIM per perintah."],
-       ["SENSOR", "Gauge RPM/throttle/kecepatan baling-baling kiri &amp; kanan "
-        "(estimasi) serta Roll/Pitch/Yaw MPU (real, via telemetri radio) + saklar "
-        "<b>Log MPU</b>."],
-       ["LOG", "Catatan aktivitas realtime, saklar <b>Auto-simpan TXT</b>, serta "
-        "Export CSV / Export TXT / Clear."],
-       ["SISTEM", "Saklar komponen (NRF, Heartbeat, Motor), indikator monitor, pemilih "
+        "pada kanvas; daftar antrean perintah; tombol KIRIM MISI (&rarr; DASHBOARD)."],
+       ["DASHBOARD", "Terbuka otomatis sesudah misi/perintah dikirim: status &amp; "
+        "perintah berjalan, kemajuan antrean + sisa waktu, <b>koordinat sudut MPU "
+        "(Roll/Pitch/Yaw)</b> yang dikirim robot, gauge baling-baling (estimasi), "
+        "tombol HENTIKAN (STOP) berukuran besar, dan tombol kembali ke BERANDA."],
+       ["SETTING &rsaquo; SISTEM",
+        "Saklar komponen (NRF, Heartbeat, Motor), indikator monitor, pemilih "
         "<b>MODE KERJA</b> (SIMULASI/REAL), status log &amp; auto-simpan, informasi "
-        "layar, dan tombol keluar."]],
-      [3 * cm, 12 * cm])
+        "layar, dan tombol keluar."],
+       ["SETTING &rsaquo; MANUAL",
+        "Maju dalam <b>meter</b> + putar kiri/kanan dalam derajat: nilai besar, tombol "
+        "&minus;/+, papan angka, penunjuk jumlah paket FW, dan tombol KIRIM per "
+        "perintah (&rarr; DASHBOARD)."],
+       ["SETTING &rsaquo; LOG",
+        "Catatan aktivitas realtime, saklar <b>Auto-simpan TXT</b> &amp; <b>Log MPU</b> "
+        "(keduanya menyala sejak aplikasi dibuka), keterangan retensi 3 hari, serta "
+        "Export CSV / Export TXT / Clear."]],
+      [3.6 * cm, 11.4 * cm])
 
 # ===================================================================== 5
 h1("5. Implementasi Prototipe")
 h2("5.1 Fitur GUI")
 bullets([
-    "<b>Halaman BERANDA:</b> status robot berukuran besar (SIAP / MENGIRIM PERINTAH / "
+    "<b>Halaman BERANDA:</b> layar pembuka bergaya ATM berisi dua tombol besar "
+    "&mdash; MISI dan SETTING &mdash; ditambah jalan pintas LIHAT DASHBOARD yang "
+    "hanya muncul selagi ada perintah berjalan.",
+    "<b>Halaman DASHBOARD:</b> status robot berukuran besar (SIAP / MENGIRIM PERINTAH / "
     "ROBOT BERGERAK / KIRIM ULANG / SELESAI / DIBATALKAN / GAGAL), paket perintah yang "
-    "sedang dijalankan, kemajuan antrean, perkiraan sisa waktu, dan arah hadap.",
+    "sedang dijalankan, kemajuan antrean, perkiraan sisa waktu, koordinat sudut MPU "
+    "(Roll/Pitch/Yaw), gauge baling-baling, dan tombol HENTIKAN berukuran besar. "
+    "Terbuka <b>otomatis</b> sesudah KIRIM MISI atau KIRIM perintah manual.",
     "<b>Halaman MISI:</b> input Panjang, Lebar, Lebar lintasan, Kecepatan (m/s), dan "
     "Titik awal; kanvas preview jalur zigzag berpanah + titik START (sentuh peta = pilih "
     "titik awal); daftar <b>antrean perintah kendali</b> yang akan dikirim beserta "
     "ringkasan (jumlah lintasan, jarak, jumlah perintah, estimasi waktu).",
-    "<b>Halaman MANUAL:</b> tiga kartu besar berisi nilai, tombol &minus;/+, papan "
+    "<b>SETTING &rsaquo; MANUAL:</b> tiga kartu besar berisi nilai, tombol &minus;/+, papan "
     "angka, dan tombol KIRIM. Kartu <b>MAJU diisi dalam METER</b> (0,1&ndash;50 m, "
     "menerima pecahan seperti 2,5 m) dan di bawah angkanya tertulis menjadi berapa paket "
     "FW jarak itu dipecah &mdash; operator melihat persis apa yang akan dikirim. Kartu "
@@ -580,15 +633,12 @@ bullets([
     "halaman.",
     "<b>Tombol STOP permanen</b> pada bilah atas: mengirim <b>STOP:0</b> dan membatalkan "
     "sisa antrean dari halaman mana pun.",
-    "<b>Halaman SENSOR:</b> gauge RPM/throttle/kecepatan baling-baling kiri &amp; kanan, "
-    "serta Roll/Pitch/Yaw MPU realtime dari <b>telemetri radio NRF</b> &mdash; tanpa kolom "
-    "port sama sekali. Saklar <b>Log MPU</b> menyalakan pencatatan sudut (satu baris per "
-    "detik) yang berjalan di latar belakang.",
-    "<b>Halaman LOG:</b> catatan realtime seluruh siklus protokol (KIRIM &rarr; GERAK "
-    "&rarr; SELESAI), saklar <b>Auto-simpan TXT</b> beserta nama berkas tujuannya, dan "
-    "tombol Export CSV / Export TXT / Clear.",
-    "<b>Halaman SISTEM:</b> saklar NRF TX, Heartbeat PING, dan Motor (efek nyata lewat "
-    "STOP); indikator monitor Motor Kiri/Kanan &amp; MPU; pemilih <b>MODE KERJA</b> "
+    "<b>SETTING &rsaquo; LOG:</b> catatan realtime seluruh siklus protokol (KIRIM "
+    "&rarr; GERAK &rarr; SELESAI), saklar <b>Auto-simpan TXT</b> dan <b>Log MPU</b> yang "
+    "keduanya sudah menyala sejak aplikasi dibuka, nama berkas tujuan, keterangan "
+    "retensi 3 hari, serta tombol Export CSV / Export TXT / Clear.",
+    "<b>SETTING &rsaquo; SISTEM:</b> saklar NRF TX, Heartbeat PING, dan Motor (efek nyata "
+    "lewat STOP); indikator monitor Motor Kiri/Kanan &amp; MPU; pemilih <b>MODE KERJA</b> "
     "REAL/SIMULASI dan saklar robot virtual; ringkasan status log MPU &amp; auto-simpan; "
     "informasi resolusi layar &amp; faktor skala.",
 ])
@@ -603,26 +653,28 @@ p("Mode SIMULASI kini menjadi <b>keadaan awal aplikasi</b>, bukan sekadar jaring
 h2("5.3 Tampilan Antarmuka")
 p("Seluruh tangkapan layar berikut diambil pada ukuran <b>800 &times; 480 piksel</b>, "
   "yaitu resolusi layar sentuh 7 inci yang dipakai Pengendali Utama.")
-figure(SCREENSHOT,
-       "Gambar 1. Halaman BERANDA: status robot, paket perintah yang sedang dijalankan, "
-       "kemajuan antrean, dan tombol STOP yang selalu terlihat di bilah atas.")
+figure("gui_beranda.png",
+       "Gambar 1. Halaman BERANDA: layar pembuka hanya menawarkan MISI dan SETTING; "
+       "jalan pintas LIHAT DASHBOARD muncul karena ada misi yang sedang berjalan.")
 figure("gui_misi.png",
        "Gambar 2. Halaman MISI: input dimensi tambak di kiri; preview jalur zigzag dan "
        "daftar antrean perintah kendali (FW/CW/CCW) yang akan dikirim di kanan.")
+figure(SCREENSHOT,
+       "Gambar 3. Halaman DASHBOARD &mdash; terbuka sendiri sesudah KIRIM MISI: status "
+       "dan perintah yang sedang dijalankan, kemajuan antrean, koordinat sudut MPU dari "
+       "robot, gauge baling-baling (estimasi), serta tombol HENTIKAN berukuran besar.")
 figure("gui_manual.png",
-       "Gambar 3. Halaman MANUAL: input manual FW, CCW, dan CW dengan tombol besar, "
-       "penunjuk rentang sah, dan tombol KIRIM per perintah.")
+       "Gambar 4. SETTING &rsaquo; MANUAL: maju bersatuan meter, putar kiri/kanan dalam "
+       "derajat, penunjuk rentang sah, dan tombol KIRIM per perintah.")
 figure("gui_keypad.png",
-       "Gambar 4. Papan angka layar penuh &mdash; operasi tanpa keyboard fisik, "
+       "Gambar 5. Papan angka layar penuh &mdash; operasi tanpa keyboard fisik, "
        "lengkap dengan penunjuk rentang nilai yang sah.")
-figure("gui_sensor.png",
-       "Gambar 5. Halaman SENSOR: gauge baling-baling (estimasi) dan sudut MPU (real).")
 figure("gui_log.png",
-       "Gambar 6. Halaman LOG: seluruh siklus protokol terekam &mdash; pengiriman "
-       "perintah, penerimaan ON, hingga FIN.")
+       "Gambar 6. SETTING &rsaquo; LOG: seluruh siklus protokol terekam beserta sudut "
+       "MPU; auto-simpan TXT dan Log MPU sudah menyala sejak aplikasi dibuka.")
 figure("gui_sistem.png",
-       "Gambar 7. Halaman SISTEM: saklar komponen, mode simulasi, dan informasi "
-       "resolusi layar beserta faktor skala tampilan.")
+       "Gambar 7. SETTING &rsaquo; SISTEM: saklar komponen, pemilih MODE KERJA, dan "
+       "informasi resolusi layar beserta faktor skala tampilan.")
 
 # ===================================================================== 6
 h1("6. Pengujian (Black-Box)")
@@ -675,7 +727,16 @@ table(["Uji", "Skenario", "Hasil Diharapkan"],
        ["T-22", "Nyalakan Auto-simpan TXT lalu jalankan misi",
         "Berkas logs/log_feeder_*.txt terisi baris demi baris selagi misi berjalan"],
        ["T-23", "Tutup aplikasi paksa saat auto-simpan menyala",
-        "Berkas TXT tetap berisi seluruh baris hingga kejadian terakhir"]],
+        "Berkas TXT tetap berisi seluruh baris hingga kejadian terakhir"],
+       ["T-24", "Buka aplikasi, amati layar pembuka",
+        "Hanya dua tombol (MISI, SETTING); tidak ada bilah navigasi"],
+       ["T-25", "Tekan KIRIM MISI",
+        "Aplikasi berpindah SENDIRI ke DASHBOARD; status &amp; koordinat MPU "
+        "berjalan realtime"],
+       ["T-26", "Tekan HENTIKAN di DASHBOARD",
+        "STOP:0 terkirim, status DIBATALKAN, jalan pintas dashboard di BERANDA hilang"],
+       ["T-27", "Taruh berkas log bertanggal 5 hari lalu di folder logs/, buka aplikasi",
+        "Berkas terhapus &amp; tercatat di log; berkas sesi berjalan tetap ada"]],
       [1.4 * cm, 6.6 * cm, 7 * cm])
 
 # ===================================================================== 7
@@ -715,7 +776,8 @@ table(["Berkas", "Keterangan"],
         "FW/CW/CCW/STOP yang membalas ON &amp; FIN"],
        ["Robot/New/Finalnew/Dokumen Spesifikasi Teknis_Skripsi.docx",
         "Acuan perilaku robot &amp; protokol komunikasi"],
-       ["logs/", "Berkas auto-simpan TXT &mdash; dibuat sendiri saat saklar dinyalakan"]],
+       ["logs/", "Berkas auto-simpan TXT &mdash; dibuat sendiri sejak aplikasi "
+        "dibuka; isi &gt; 3 hari dihapus otomatis"]],
       [6 * cm, 9 * cm])
 
 h2("7.4 Deploy di Raspberry Pi (rekomendasi)")
@@ -780,8 +842,12 @@ bullets([
     "beserta satu dependensi (pyserial) berhasil dihapus.",
     "<b>Mode kerja menjadi keputusan operator:</b> REAL/SIMULASI dapat dipindah kapan saja "
     "lewat chip MODE, dengan SIMULASI sebagai keadaan awal yang aman.",
-    "<b>Auto-simpan log ke TXT</b> menjaga catatan uji lapangan tetap utuh tanpa perlu "
-    "mengingat menekan tombol Export.",
+    "<b>Auto-simpan log ke TXT</b> menyala sejak aplikasi dibuka sehingga catatan uji "
+    "lapangan tetap utuh tanpa perlu mengingat menekan tombol Export, sementara berkas "
+    "berumur lebih dari 3 hari dibuang sendiri agar kartu SD Raspberry Pi tidak penuh.",
+    "<b>Navigasi berubah dari menu menjadi alur:</b> beranda menyisakan MISI dan "
+    "SETTING, dan DASHBOARD &mdash; berisi status, koordinat MPU, serta tombol berhenti "
+    "&mdash; terbuka sendiri begitu misi dikirim.",
 ])
 p("Sebagai efek samping yang menguntungkan, belokan kini <b>ditutup memakai umpan balik "
   "sudut yaw MPU</b> (bukan durasi tetap), sehingga rencana iterasi sebelumnya soal "
