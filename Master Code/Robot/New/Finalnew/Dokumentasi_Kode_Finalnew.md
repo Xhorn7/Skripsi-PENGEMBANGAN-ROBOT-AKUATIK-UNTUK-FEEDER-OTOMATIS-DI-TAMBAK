@@ -115,6 +115,68 @@ Konsekuensinya:
 
 ---
 
+## 4b. Kesehatan MPU — `mpuProbe()`, `initMPU()`, `mpuUpdate()`
+
+Seluruh kemudi robot bergantung pada yaw MPU: `FW` memakainya untuk *heading-hold*, `CW`/`CCW` memakainya untuk menutup putaran. Karena itu **MPU yang mati harus diketahui, bukan dipercaya diam-diam**.
+
+### Sidik jari MPU yang tidak terbaca
+
+Pustaka `MPU6050_tockn` **tidak memeriksa ACK** sama sekali — `mpu.begin()` tetap terlihat berhasil walaupun tidak ada sensor di bus. Bila I2C tidak menjawab, `Wire.read()` mengembalikan `-1` untuk **setiap** byte, sehingga di dalam `update()`:
+
+```
+rawAccX = rawAccY = rawAccZ = (-1 << 8) | -1 = -1
+accX = accY = accZ = -1 / 16384 = -6,1e-5
+
+angleAccX = atan2(accY, accZ + abs(accX)) = atan2(-6,1e-5, 0) = -90,0°  PAS
+angleAccY = atan2(accX, accZ + abs(accY)) / -1                = +90,0°  PAS
+angleZ    = integral gyro yang habis dikurangi offset          = -0,0°
+```
+
+Filter komplementer lalu menarik `angleX`/`angleY` ke nilai akselerometer itu, jadi sudut **terkunci**:
+
+> `Roll=-90.0  Pitch=90.0  Yaw=-0.0` yang **tidak pernah berubah walau robot digoyang** bukan pembacaan sensor — itu tanda bus I2C diam. Penyebabnya kabel/daya (SDA=21, SCL=22, 3.3 V, GND, AD0→GND), bukan kalibrasi.
+
+### Cara firmware mendeteksinya
+
+| Fungsi | Tugas |
+|---|---|
+| `i2cScanReport()` | Sapu seluruh alamat `0x01`–`0x7E` saat boot dan cetak apa yang benar-benar menjawab — memberi **fakta**, bukan tebakan |
+| `mpuWhoAmI()` | Baca register `0x75`; MPU6050 asli menjawab `0x68` |
+| `mpuProbe()` | `Wire.endTransmission() == 0` — benar-benar ada yang meng-ACK alamat `0x68`? |
+| `initMPU(calibrate)` | Probe dulu, baru `mpu.begin()`. `calibrate=false` dipakai saat sambung ulang **selagi robot bergerak**, karena kalibrasi menuntut sensor diam |
+| `mpuUpdate()` | Pengganti `mpu.update()` — **semua** pembacaan MPU lewat sini |
+| `maybeCalibrateWhenIdle()` | Menyusulkan `calcGyroOffsets()` bila MPU baru terdeteksi setelah boot |
+
+> **Kalau bus kosong tapi ada `0x69`**, itu berarti pin `AD0` modul ter-HIGH. Firmware hanya bicara ke `0x68`, jadi sensor tak akan pernah terbaca — sambungkan `AD0` ke `GND`.
+
+`mpuUpdate()` menilai dua hal tiap pembacaan:
+
+1. ketiga sumbu akselerometer tepat `-1` → tidak ada byte yang terbaca;
+2. besar vektor percepatan `|a| = √(ax² + ay² + az²)` harus berada di **0,30 – 3,00 g** — akselerometer sehat selalu merasakan gravitasi ~1 g pada posisi apa pun, sedangkan sensor mati menghasilkan ~0.
+
+Hasilnya disimpan di `mpuOk`, dan setiap perubahan status dicetak ke Serial. Saat `mpuOk` salah, bus di-`Wire.begin()` ulang tiap `MPU_RETRY_INTERVAL_MS` (2 detik) untuk mencoba pulih sendiri.
+
+### Gejala kedua: yaw merayap pelan dengan laju tetap
+
+Berbeda dari sudut yang beku, **yaw yang bertambah pelan-pelan (mis. ~0,1°/detik) padahal robot diam** berarti sensor terbaca tetapi **offset giroskopnya nol** — `calcGyroOffsets()` tidak pernah dijalankan.
+
+Penyebabnya: `MPU6050 mpu(Wire)` adalah objek global, sehingga `gyroXoffset`/`gyroYoffset`/`gyroZoffset` ter-inisialisasi `0.0`. Bila probe gagal saat boot, `initMPU(true)` tidak pernah terpanggil; kalau sensor baru muncul belakangan dan hanya disambungkan dengan `calibrate=false`, offsetnya tetap nol selamanya. Bias giroskop mentah lalu diintegrasikan terus-menerus dan yaw merayap.
+
+Karena itu `mpuCalibrated` dilacak terpisah dari `mpuOk`, dan `maybeCalibrateWhenIdle()` menyusulkan kalibrasi begitu robot menganggur. Kalibrasi dipanggil sebagai `calcGyroOffsets(true, 0, 0)` — argumen `delayBefore`/`delayAfter` bawaan pustaka (1000 ms + 3000 ms) sengaja dinolkan karena murni kosmetik, sementara 4 detik diam membuat robot berhenti melayani radio.
+
+### Akibatnya pada gerakan
+
+| Perintah | Saat `mpuOk` benar | Saat `mpuOk` salah |
+|---|---|---|
+| `FW` | *Heading-hold* proporsional aktif | Koreksi **dimatikan** — maju lurus dua motor sama besar, lebih baik daripada dikemudikan sudut palsu |
+| `CW` / `CCW` | Putaran ditutup umpan balik yaw | Turun ke **open-loop berbasis waktu** (`deg / TURN_RATE_DPS`) |
+
+> Sebelum ada penanganan ini, putaran dengan MPU mati menunggu target yaw yang tak akan pernah tercapai, sehingga selalu habis di batas waktu: `CCW:90` berjalan `90/60 × 3000 + 3000` = **7500 ms**, padahal seharusnya ~1500 ms — robot berputar sekitar 5× lipat pada setiap belokan.
+
+Status ini juga dikirim ke Pengendali Utama lewat bidang `S` pada telemetri (lihat bagian 14), sehingga GUI dapat menampilkan angka merah dan peringatan alih-alih membiarkan operator membaca sudut beku sebagai data sungguhan.
+
+---
+
 ## 5. Fungsi Gerak Dasar (Motor Primitives)
 
 | Fungsi | Aksi |
@@ -148,13 +210,20 @@ Tiga pembungkusnya:
 
 | Fungsi | Kiriman | Kapan |
 |---|---|---|
-| `sendOn(move)` | `ON <move>` | Saat gerakan dimulai, lalu tiap 1 detik |
-| `sendFin(move, dist)` | `FIN <move>:<dist>` | Saat gerakan tuntas |
-| `maybeSendTelemetry()` | `R=..;P=..;Y=..` | Setelah menerima paket, dibatasi tiap 200 ms |
+| `sendOn(move)` | `ON <move>` | Saat gerakan dimulai + 3 ulangan rapat (120 ms), lalu tiap 1 detik |
+| `sendFin(move, dist)` | `FIN <move>:<dist>` | Saat gerakan tuntas, lalu **diulang** hingga 6× tiap 150 ms |
+| `maybeResendFin()` | ulangan `FIN` | Berhenti begitu perintah gerak berikutnya datang |
+| `maybeSendTelemetry()` | `R=..;P=..;Y=..;S=<kode>` | Setelah menerima paket, dibatasi tiap 200 ms |
 
 `maybeSendOn()` memeriksa apakah sudah lewat `ON_INTERVAL_MS` sejak kiriman terakhir; kalau ya, kirim lagi.
 
+> **Kenapa `FIN` diulang?** Paket balik dikirim **NOACK** dan radionya half-duplex. `ON` sudah punya jaring pengaman karena diulang tiap 1 detik, tetapi `FIN` dulu dikirim **sekali saja**. Bila paket itu lepas tepat saat Pengendali Utama sedang giliran mengirim, paketnya hilang selamanya: gerakan yang **sudah tuntas** terlihat "tidak direspon" dan seluruh sisa antrean misi dibatalkan.
+>
+> Pengulangan dihentikan oleh `clearPendingFin()` begitu perintah gerak berikutnya tiba — itu bukti Pengendali Utama sudah menerimanya. Di sisi Pi, tiap `FIN` diberi **cap waktu terima** dan hanya yang tiba **sesudah** perintah dikirim yang dihitung; tanpa itu, dua perintah sejenis berturut-turut (mis. `FW:200` lalu `FW:200`) bisa membuat perintah kedua dianggap selesai oleh kiriman ulang milik perintah pertama.
+
 > **Kenapa `ON` pertama dikirim seketika?** Pengendali Utama hanya menunggu **1 detik** sebelum menganggap perintah gagal dan mengirimnya ulang. Kalau robot menunggu satu siklus penuh dulu, hampir setiap perintah akan terkirim ganda.
+
+> **Kenapa `ON` juga diulang rapat di awal?** Radio ini half-duplex. Saat robot membalas `ON` dalam hitungan mikrodetik, Pengendali Utama baru saja selesai mengirim dan belum tentu sudah pindah ke mode dengar — `ON` pertama karena itu gampang terlewat. Karena ulangan berikutnya baru datang 1 detik kemudian, tepat sama dengan batas tunggunya, perintah kerap dianggap gagal lalu dikirim ulang dan memboroskan 1 detik. Tiga ulangan berjarak 120 ms di awal gerakan menutup celah itu; irama 1 detik sesuai dokumen spesifikasi tetap berlaku sesudahnya.
 
 ---
 
@@ -201,7 +270,7 @@ Arah hadap saat perintah diterima **dikunci** sebagai `targetYaw`, lalu dipertah
 
 ```
 err = targetYaw - yaw            // dinormalisasi ke -180..180
-if (|err| > HEADING_DEADBAND)
+if (mpuOk && |err| > HEADING_DEADBAND)
     correction = clamp(KP_HEADING * err, ±MAX_CORRECTION)
 
 escKiri  = constrain(CRUISE_PWM + correction, 1000, 2000)
@@ -211,6 +280,8 @@ escKanan = constrain(CRUISE_PWM - correction, 1000, 2000)
 Semakin besar simpangan arah, semakin kuat koreksinya — jauh lebih halus daripada koreksi tetap. *Deadband* 2° mencegah motor terus-menerus dikoreksi karena derau sensor.
 
 Karena tiap perintah `FW` mengunci ulang `targetYaw` dari pembacaan terbaru, akumulasi *drift* giroskop tidak menumpuk lintas perintah.
+
+Syarat `mpuOk` pada baris koreksi penting: bila MPU tidak terbaca, `err` dihitung dari sudut palsu yang beku, sehingga koreksi justru **membelokkan** robot secara konsisten ke satu arah. Lebih baik maju lurus tanpa koreksi (lihat bagian 4b).
 
 ---
 
@@ -228,7 +299,14 @@ loop:
 
 `turned` selalu dihitung **positif ke arah yang diperintahkan**, sehingga satu rumus melayani kedua arah.
 
-Batas waktu `deg / TURN_RATE_DPS * 3000 + 3000` ms dipasang sebagai pengaman bila MPU tidak merespons atau robot tertahan sesuatu — bukan sebagai penentu sudut.
+Dua tenggat dihitung di awal:
+
+```
+openLoopMs = deg / TURN_RATE_DPS * 1000        // perkiraan lama putaran
+limitMs    = openLoopMs * 3 + 3000             // pengaman mode closed-loop
+```
+
+`limitMs` hanya pengaman bila robot tertahan sesuatu — bukan penentu sudut. Bila `mpuOk` salah, putaran **tidak** dibiarkan berjalan sampai `limitMs`; ia berhenti di `openLoopMs` sebagai putaran berbasis waktu. Tanpa ini, setiap belokan dengan MPU mati akan berputar ~5× lipat (lihat bagian 4b).
 
 > **Kalau `CW` malah berbelok ke kiri**, tanda sumbu Z MPU terbalik terhadap pemasangan. Ubah `YAW_SIGN` menjadi `-1`; tidak perlu mengubah logika lain.
 
@@ -279,7 +357,7 @@ Validasi ini adalah **lapisan kedua** — aplikasi sudah menolak nilai di luar r
 Urutan inisialisasi **penting dan disengaja**:
 
 1. **NRF24 lebih dulu** — `begin()`, PA_LOW, 250 KBPS, channel `0x76`, reading pipe 1, `enableDynamicAck()`, `startListening()`.
-2. **MPU6050** — `Wire.begin(21, 22)`, `calcGyroOffsets(true)`.
+2. **MPU6050** — `Wire.begin(21, 22)`, `setClock(100 kHz)`, `setTimeOut(50 ms)`, lalu **`mpuProbe()` dulu**; kalibrasi `calcGyroOffsets(true)` hanya dijalankan kalau sensor benar-benar meng-ACK.
 3. **ESC** — alokasi 4 timer PWM, `setPeriodHertz(50)`, `attach(pin, 1000, 2000)`, lalu `armESC()`.
 
 > **Kenapa NRF paling awal?** `calcGyroOffsets` bisa menggantung selamanya bila I2C bermasalah, dan `armESC()` menahan 5 detik. Kalau radio diinisialisasi belakangan, `startListening()` baru aktif ~8 detik setelah boot — Pengendali Utama tidak ter-ACK dan melaporkan gagal.
@@ -287,6 +365,8 @@ Urutan inisialisasi **penting dan disengaja**:
 > `ESP32PWM::allocateTimer()` **wajib** dipanggil sebelum `attach()`. Tanpa itu PWM ke ESC bisa gagal diam-diam dan baling-baling tidak bergerak sama sekali.
 
 Bila `radio.begin()` gagal, firmware masuk perulangan tak berujung sambil mencetak petunjuk wiring — lebih baik berhenti terang-terangan daripada berjalan tanpa kendali.
+
+> **MPU gagal ditangani berbeda dari NRF gagal.** Tanpa radio robot tidak bisa diperintah sama sekali, jadi berhenti adalah pilihan yang benar. Tanpa MPU robot masih bisa menjalankan perintah secara open-loop, jadi firmware mencetak petunjuk wiring lalu **tetap berjalan** dengan `mpuOk = false`, sambil terus mencoba menyambung ulang tiap 2 detik. Yang penting: kondisi itu dilaporkan, bukan disembunyikan.
 
 ---
 
@@ -343,7 +423,18 @@ Perhatikan `runMove()` bersifat **blocking** — selama gerakan berlangsung `loo
 |---|---|
 | `ON <Moves>` | Perintah sedang dijalankan — dikirim tiap 1 detik selama bergerak |
 | `FIN <Moves>:<Dist>` | Perintah selesai dieksekusi dengan baik |
-| `R=<roll>;P=<pitch>;Y=<yaw>` | Telemetri sudut MPU (tambahan, di luar spesifikasi wajib) |
+| `R=<roll>;P=<pitch>;Y=<yaw>;S=<kode>` | Telemetri sudut MPU (tambahan, di luar spesifikasi wajib). Kode status lihat tabel di bawah |
+
+**Kode status MPU (`S`)** — dikirim lewat radio supaya diagnosa terbaca dari GUI, karena ESP32 yang sudah terpasang di robot umumnya tidak bisa lagi dicolok kabel Serial:
+
+| `S` | Arti | Yang harus diperiksa |
+|---|---|---|
+| `1` | Sehat | — |
+| `0` | Bus sehat (pull-up ada) tapi tak ada yang menjawab | SDA & SCL kemungkinan **tertukar**, atau chip MPU rusak |
+| `5` | SDA & SCL diam di **LOW** (tidak ada pull-up) | Modul tidak bertenaga: cek 3.3 V, **GND**, dan solderan kabel SDA/SCL |
+| `2` | Perangkat ada di `0x69`, bukan `0x68` | Pin `AD0` modul ter-HIGH — sambungkan `AD0` ke `GND` |
+| `3` | Terbaca, tapi gyro belum terkalibrasi | Yaw merayap; diamkan robot, firmware mengkalibrasi sendiri |
+| `4` | `0x68` meng-ACK tapi data tidak keluar | Kabel I2C goyang/terlalu panjang, atau catu 3.3 V drop |
 
 **Siklus lengkap satu perintah:**
 

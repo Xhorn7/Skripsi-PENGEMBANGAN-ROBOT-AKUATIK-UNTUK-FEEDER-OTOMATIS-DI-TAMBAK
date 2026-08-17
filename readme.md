@@ -23,7 +23,8 @@ Protokol mengikuti **Dokumen Spesifikasi Teknis — Robot Akuatik untuk Tambak I
 
 ## Fitur
 
-- **Perencanaan jalur (path planning):** dari dimensi tambak + titik awal + lebar lintasan + kecepatan → daftar segmen *maju/belok* (pola *boustrophedon*/zigzag) → **antrean perintah** `FW`/`CW`/`CCW`.
+- **Perencanaan jalur (path planning):** dari dimensi tambak + titik awal + lebar lintasan + kecepatan → daftar segmen *maju/belok* (pola *boustrophedon*/zigzag) → **antrean perintah** `FW`/`CW`/`CCW`. Lebar tambak dibagi menjadi `⌈lebar / lebar lintasan⌉` pita, dan jalur ditaruh di **setiap pembatas pita termasuk kedua tepi** — jadi jalur pertama & terakhir menempel di dinding tambak dan lintasan benar-benar mencapai ujung kotak.
+- **Deteksi MPU mati:** robot melaporkan kesehatan sensornya (`S=0`) bila bus I2C tidak menjawab; GUI menandainya merah, dan firmware menonaktifkan *heading-hold* serta turun ke putaran open-loop alih-alih mengemudi dengan sudut palsu.
 - **Preview jalur:** kanvas peta tambak + daftar perintah yang akan dikirim, sebelum misi dijalankan.
 - **Kendali manual:** maju diisi dalam **meter** (0,1–50 m) lalu dipecah otomatis jadi paket `FW` 10–200 cm; putar `CW` / `CCW` (1–180°), plus `STOP` darurat.
 - **GUI mengikuti ukuran layar:** dirancang untuk **layar sentuh 7 inci** (800 × 480) bergaya mesin ATM. Beranda hanya menawarkan **MISI** dan **SETTING**; **dashboard terbuka sendiri** begitu misi dikirim (status, koordinat MPU, STOP besar). Papan angka layar penuh — operasi penuh **tanpa keyboard fisik**.
@@ -78,7 +79,7 @@ NRF: channel `0x76`, 250 KBPS, PA_LOW. Perintah di alamat `00001`, sinyal balik 
 |---|---|
 | `ON <Moves>` | Perintah sedang dijalankan — dikirim tiap 1 detik selama bergerak |
 | `FIN <Moves>:<Dist>` | Perintah selesai — izin lanjut ke perintah berikutnya |
-| `R=<roll>;P=<pitch>;Y=<yaw>` | Telemetri sudut MPU (tambahan, di luar spesifikasi wajib) |
+| `R=<roll>;P=<pitch>;Y=<yaw>;S=<kode>` | Telemetri sudut MPU (tambahan, di luar spesifikasi wajib). `S`: `1` sehat, `0` bus sehat tanpa jawaban, `2` modul di 0x69, `3` gyro belum terkalibrasi, `4` ACK tanpa data, `5` SDA/SCL diam LOW |
 
 **Siklus satu perintah:**
 
@@ -152,11 +153,24 @@ Alur: **BERANDA** (MISI · SETTING) → **MISI** (ukur tambak, preview jalur) �
 Build via PlatformIO (`platformio.ini` sudah disiapkan):
 
 ```bash
-pio run -e esp32dev -t upload      # flash firmware produksi
+pio run -e esp32dev -t upload      # flash firmware produksi (radio + MPU + ESC)
+pio run -e movetest -t upload      # tes gerak tanpa radio
+pio run -e mputest  -t upload      # kalibrasi MPU + cek bus I2C
+pio run -e mpudiag  -t upload      # diagnosa I2C (scan bus + dump register)
+pio run -e esctest  -t upload      # tes ESC/motor murni
 pio device monitor                 # pantau Serial 115200
 ```
 
 Atau buka `Master Code/Robot/New/Finalnew/Finalnew.ino` di Arduino IDE dengan library **RF24, MPU6050_tockn, ESP32Servo**.
+
+**Kalau upload gagal**, bedakan dulu pesannya — dua ini sangat berbeda artinya:
+
+| Pesan esptool | Arti | Tindakan |
+|---|---|---|
+| `Wrong boot mode detected (0x13)` | Chip ter-reset tapi masuk boot normal, bukan mode download. Rangkaian auto-reset tidak menarik GPIO0 ke LOW. **Bukan kerusakan.** | Tahan `BOOT` selama fase `Connecting...`, lepas saat muncul `Writing at`. Tanpa tombol BOOT: jumper GPIO0→GND, ketuk EN, lalu cabut jumper. |
+| `Failed to communicate with the flash chip` | ESP32 tidak bisa membaca flash internalnya. Hampir selalu **rel 3,3 V tidak stabil**, bukan chip rusak. | Cabut semua modul (MPU/NRF/ESC) lalu upload lagi. Kalau berhasil, ada modul yang menarik rel — ukur resistansi VCC–GND tiap modul. |
+
+> Pengalaman nyata di proyek ini: modul MPU6050 yang short membuat ESP32 gagal di-flash **dan** Arduino Nano gagal masuk bootloader. Kalau upload tiba-tiba gagal padahal sebelumnya lancar, curigai modul yang tersambung sebelum mencurigai board-nya.
 
 **Kalibrasi saat uji di air:**
 
@@ -166,13 +180,16 @@ Atau buka `Master Code/Robot/New/Finalnew/Finalnew.ino` di Arduino IDE dengan li
 | `YAW_SIGN` | Perintahkan `CW:90`; kalau robot berputar ke kiri, ubah jadi `-1` |
 | `KP_HEADING` | Terlalu kecil: melenceng. Terlalu besar: bergoyang kiri-kanan |
 
+> **Sebelum mengkalibrasi, pastikan MPU benar-benar terbaca.** Serial akan mencetak `MPU6050 terdeteksi di 0x68` saat boot. Kalau telemetri diam di `Roll=-90.0 Pitch=90.0 Yaw=-0.0`, itu **bukan** sudut sungguhan melainkan sidik jari bus I2C yang tidak menjawab — periksa SDA=GPIO21, SCL=GPIO22, 3.3 V, GND, dan AD0→GND. Mengkalibrasi `KP_HEADING`/`YAW_SIGN` dalam kondisi itu percuma.
+
 ### Regenerate dokumentasi
 
 ```bash
 cd "Master Code/Transmitter"
 python capture_gui.py            # screenshot tiap halaman GUI
 python build_docs_pdf.py         # Dokumentasi_GUI_Feeder_SDLC.pdf
-python build_code_docs_pdf.py    # 2 PDF dokumentasi kode
+python build_code_docs_pdf.py    # 3 PDF dokumentasi kode
+python build_raspberry_zip.py    # raspberry_feeder.zip (paket untuk Pi)
 
 cd ../..
 python render_flowcharts.py      # Flowchart Images/*.png dari flowchart.md

@@ -171,6 +171,10 @@ tidak penuh. Berkas yang sedang ditulis tidak pernah ikut terhapus.
 | Tombol MODE menolak pindah ke REAL | pyrf24 gagal / SPI belum aktif / wiring salah — pesannya muncul di dialog & log. Cek `ls /dev/spidev*` harus ada. |
 | ROBOT = TERPUTUS terus | Robot belum menyala/listening, channel/address beda, atau NRF kurang daya (kapasitor 3.3V). |
 | MPU kosong / "menunggu telemetri robot" | Robot belum mengirim telemetri. Pastikan **Heartbeat PING** menyala (SETTING > SISTEM), robot hidup, dan firmware mengirim `R=..;P=..;Y=..`. |
+| Angka MPU **merah** + "MPU TIDAK TERBACA" | Robot melapor `S=0`: bus I2C-nya diam. Cek di sisi robot — SDA=GPIO21, SCL=GPIO22, VCC=3.3V, GND tersambung, AD0→GND, kabel I2C jangan panjang & jauhkan dari kabel daya ESC. |
+| MPU diam di `Roll=-90.0 Pitch=90.0 Yaw=-0.0` | **Sama dengan di atas** — angka itu sidik jari I2C yang tidak menjawab (`atan2(-6.1e-5, 0) = -90°` PAS), bukan sudut sungguhan. Bukan masalah kalibrasi. |
+| Yaw merayap pelan (mis. +0,1°/detik) padahal robot **diam** | Sensor terbaca, tapi **offset gyro belum dihitung** (`calcGyroOffsets` tak pernah jalan → offset = 0). Firmware sekarang menyusulkannya otomatis saat menganggur; Serial akan mencetak `Kalibrasi gyro selesai`. Pastikan robot benar-benar diam & datar saat itu. |
+| Perlu tahu penyebab pasti MPU bermasalah | Flash sketch diagnosa: `pio run -e mpudiag -t upload && pio device monitor`. Ia memindai seluruh bus I2C, membaca `WHO_AM_I` & bit SLEEP, mendump 14 byte register mentah, lalu mencetak **vonis** beserta langkah pemeriksaannya. |
 | Log lama hilang sendiri | Memang disengaja: berkas > 3 hari dibuang otomatis. Salin dulu lewat **Export CSV/TXT** bila ingin disimpan lama. |
 | Auto-simpan berhenti sendiri | Berkas gagal ditulis (kartu SD penuh / read-only). Sebabnya tampil di samping saklar; perbaiki lalu nyalakan lagi. |
 | `ModuleNotFoundError: customtkinter` | venv belum diaktifkan / `pip install -r requirements.txt` belum jalan. |
