@@ -168,7 +168,7 @@ Paket yang dikirim harus dipahami `Finalnew.ino`. Protokolnya mengikuti *Dokumen
 | `PING` | Pi → Robot | Segarkan *heartbeat*, cegah *failsafe* |
 | `ON <Moves>` | Robot → Pi | Perintah sedang dijalankan (tiap 1 detik) |
 | `FIN <Moves>:<Dist>` | Robot → Pi | Perintah selesai — izin lanjut ke perintah berikutnya |
-| `R=..;P=..;Y=..` | Robot → Pi | Telemetri sudut MPU |
+| `R=..;P=..;Y=..;S=..` | Robot → Pi | Telemetri sudut MPU. `S` = kode status MPU: `1` sehat, `0` bus sehat tapi tak ada jawaban (SDA/SCL tertukar?), `2` modul di 0x69 (AD0 HIGH), `3` gyro belum terkalibrasi, `4` ACK tanpa data, `5` SDA/SCL diam LOW (modul tak bertenaga). Opsional — firmware lama tanpa `S` tetap dikenali |
 
 **Pola Request-Response:**
 
@@ -193,7 +193,7 @@ Bila `ON` tidak datang dalam 1 detik, `CommandRunner` menganggap perintah gagal 
 | **`feeder_gui.py`** | kelas `FeederGUI` | Presentasi bergaya ATM: beranda 2 tombol, halaman MISI, DASHBOARD otomatis, SETTING (SISTEM/MANUAL/LOG), papan angka, preview jalur, gauge, LED, tampilan log |
 | **`feeder_core.py`** | `RobotCommand` | Satu paket `[Moves]:[Dist]` + validasi rentang sesuai tabel perintah |
 | | `RadioLink` | Abstraksi NRF24 (`pyrf24`) + `MockRadio` (simulasi); merutekan `ON`/`FIN`/telemetri |
-| | `plan_coverage()` / `plan_command_queue()` | Tambak persegi + titik awal + lebar lintasan → segmen "maju/belok" → antrean perintah FW/CW/CCW |
+| | `plan_coverage()` / `plan_command_queue()` | Tambak persegi + titik awal + lebar lintasan → segmen "maju/belok" → antrean perintah FW/CW/CCW. Lebar dibagi jadi `n_bands = ⌈lebar/lintasan⌉` pita (`spasi = lebar / n_bands`), lalu jalur ditaruh di **setiap pembatas pita** termasuk kedua tepi — jadi `n_lanes = n_bands + 1` dan jalur menyentuh ujung tambak di kedua sisi |
 | | `CommandRunner` | Pelaksana Request-Response: kirim, tunggu `ON` (kirim ulang bila lewat 1 detik), tunggu `FIN`, lanjut |
 | | `ActivityLogger` + `purge_old_logs()` | Pencatatan aktivitas berstempel waktu, ekspor CSV/TXT, **auto-simpan** tiap baris ke berkas TXT, dan pembuangan berkas log yang lebih tua dari 3 hari |
 | | `MPUMonitor` | Ambil sudut MPU (roll/pitch/yaw) dari telemetri NRF di latar belakang + catat ke log bila diminta |

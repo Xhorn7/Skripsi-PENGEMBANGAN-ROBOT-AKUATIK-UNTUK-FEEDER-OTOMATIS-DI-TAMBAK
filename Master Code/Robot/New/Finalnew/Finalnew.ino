@@ -48,7 +48,42 @@ char text[64];
 
 // ================= MPU =================
 
+#define SDA_PIN 21
+#define SCL_PIN 22
+#define I2C_HZ  100000UL   // 100 kHz — paling tahan kabel panjang & noise ESC
+
 MPU6050 mpu(Wire);
+
+// --- Deteksi MPU mati -----------------------------------------------------
+// Gejala yang terlihat di GUI: "Roll=-90.0 Pitch=90.0 Yaw=-0.0" TERUS-MENERUS
+// dan tidak berubah walau robot digerakkan.
+//
+// Itu BUKAN pembacaan sensor, melainkan sidik jari khas I2C yang tidak
+// menjawab. Bila requestFrom() tidak mendapat satu byte pun, Wire.read()
+// mengembalikan -1, sehingga di MPU6050_tockn::update():
+//     rawAccX = rawAccY = rawAccZ = (-1 << 8) | -1 = -1
+//     accX = accY = accZ = -1/16384 = -6.1e-5
+//     angleAccX = atan2(accY, accZ + abs(accX)) = atan2(-6.1e-5, 0) = -90.0 PAS
+//     angleAccY = -atan2(accX, accZ + abs(accY)) = +90.0 PAS
+// dan Yaw diam di -0.0 karena gyro mentah yang konstan habis dikurangi
+// offset kalibrasi. Sudut lalu "terkunci" di situ karena filter komplementer
+// menarik angleX/angleY ke angleAcc.
+//
+// Karena sudut palsu ini dipakai untuk heading-hold (FW) dan penutup putaran
+// (CW/CCW), MPU mati HARUS diketahui, bukan dipakai diam-diam untuk mengemudi.
+
+#define MPU6050_ADDR_ALT 0x69           // alamat MPU bila pin AD0 ke-HIGH
+
+bool mpuOk = false;                     // MPU menghasilkan data masuk akal?
+bool mpuCalibrated = false;             // calcGyroOffsets() sudah pernah jalan?
+bool mpuAlt69 = false;                  // ada perangkat di 0x69 (AD0 HIGH)?
+bool mpuAckNoData = false;              // 0x68 meng-ACK tapi data tidak keluar?
+bool busIdleHigh = false;               // SDA & SCL diam di HIGH (pull-up ada)?
+unsigned long lastMpuRetryMs = 0;       // percobaan sambung ulang terakhir
+
+#define MPU_RETRY_INTERVAL_MS 2000
+#define ACC_MAG_MIN 0.30f               // |a| yang wajar (g) — sensor sehat ~1 g
+#define ACC_MAG_MAX 3.00f
 
 // ================= ESC =================
 // 2x 30A Brushless ESC (tipe RC car/boat).
@@ -101,6 +136,209 @@ unsigned long lastTelemetryMs = 0;  // waktu terakhir kirim telemetri MPU
 unsigned long lastOnMs = 0;         // waktu terakhir kirim "ON [Moves]"
 bool moveInProgress = false;        // sedang menjalankan sebuah perintah gerak
 char currentMove[8] = "";           // nama perintah yang sedang berjalan
+
+// =========================================
+// MPU: PROBE, INIT, UPDATE BER-PENGAWASAN
+// =========================================
+
+// Normalisasi sudut ke -180..180. Dipakai sebelum kirim telemetri: angleZ
+// tockn adalah integral gyro MURNI yang tumbuh tanpa batas, dan "Y=-1234.5"
+// bisa membuat paket telemetri melewati batas 32 byte payload NRF24.
+float wrap180(float deg)
+{
+  while (deg >  180.0f) deg -= 360.0f;
+  while (deg < -180.0f) deg += 360.0f;
+  return deg;
+}
+
+// Apakah alamat tertentu meng-ACK di bus I2C?
+bool i2cAck(uint8_t addr)
+{
+  Wire.beginTransmission(addr);
+  return Wire.endTransmission() == 0;
+}
+
+bool mpuProbe() { return i2cAck(MPU6050_ADDR); }
+
+// Bus I2C yang SEHAT diam di HIGH, ditahan resistor pull-up pada modul MPU
+// (GY-521 punya 4k7 ke VCC). Kalau kedua jalur diam di LOW, berarti tidak ada
+// pull-up sama sekali -> modul tidak dapat 3.3V, GND-nya lepas, atau kabel/
+// solder SDA-SCL putus. Ini memisahkan "modul mati listrik" dari "modul hidup
+// tapi tidak menjawab" — dua hal yang di layar sama-sama tampil sebagai sudut
+// beku, padahal perbaikannya berbeda.
+void checkBusIdle()
+{
+  Wire.end();                       // lepas pin dari peripheral I2C
+
+  // INPUT_PULLDOWN, bukan INPUT polos. Pin CMOS yang mengambang gampang
+  // terbaca HIGH karena kebocoran/derau, jadi INPUT polos bisa melaporkan
+  // "pull-up ada" padahal jalurnya putus. Dengan pull-down internal (~45k):
+  //   ada pull-up luar 4k7  -> pembagi tegangan menang di HIGH  -> terbaca 1
+  //   jalur mengambang      -> ditarik pull-down internal ke GND -> terbaca 0
+  pinMode(SDA_PIN, INPUT_PULLDOWN);
+  pinMode(SCL_PIN, INPUT_PULLDOWN);
+  delayMicroseconds(200);           // beri waktu jalur mencapai keadaan tunak
+  busIdleHigh = digitalRead(SDA_PIN) && digitalRead(SCL_PIN);
+
+  Wire.begin(SDA_PIN, SCL_PIN);     // pasang kembali bus
+  Wire.setClock(I2C_HZ);
+  Wire.setTimeOut(50);
+}
+
+// Sapu seluruh bus & laporkan apa yang benar-benar ada di sana. Dicetak saat
+// boot supaya Serial memberi FAKTA, bukan tebakan: kalau tidak ada satu pun
+// alamat yang menjawab, masalahnya kabel/daya; kalau yang menjawab 0x69,
+// masalahnya pin AD0 (lihat catatan di bawah).
+void i2cScanReport()
+{
+  int found = 0;
+  Serial.println("-- Pemindaian bus I2C (SDA=21, SCL=22) --");
+  for (uint8_t addr = 1; addr < 127; addr++)
+  {
+    if (!i2cAck(addr)) continue;
+    found++;
+    Serial.print("   ADA perangkat di 0x");
+    if (addr < 16) Serial.print('0');
+    Serial.print(addr, HEX);
+    if (addr == 0x68) Serial.print("  <- MPU6050 (AD0 = GND) BENAR");
+    if (addr == 0x69) Serial.print("  <- MPU6050 tapi AD0 = HIGH!");
+    Serial.println();
+  }
+  if (found == 0)
+    Serial.println("   (KOSONG — tidak ada satu pun perangkat menjawab)");
+  Serial.println("----------------------------------------");
+}
+
+// Register WHO_AM_I MPU6050 = 0x75, isinya harus 0x68.
+uint8_t mpuWhoAmI()
+{
+  Wire.beginTransmission(MPU6050_ADDR);
+  Wire.write(0x75);
+  if (Wire.endTransmission(false) != 0) return 0xFF;
+  if (Wire.requestFrom((int)MPU6050_ADDR, 1) != 1) return 0xFF;
+  return Wire.read();
+}
+
+// calibrate=false dipakai saat sambung ulang di TENGAH GERAKAN: kalibrasi
+// menuntut sensor benar-benar diam, jadi menjalankannya saat robot bergerak
+// justru menghasilkan offset yang salah.
+bool initMPU(bool calibrate)
+{
+  if (!mpuProbe()) return false;
+  mpu.begin();
+  if (calibrate)
+  {
+    // (true, 0, 0) — tampilkan progres, tapi BUANG jeda bawaan pustaka
+    // (delayBefore 1000 ms + delayAfter 3000 ms). Jeda itu murni kosmetik,
+    // sementara 4 detik diam membuat robot berhenti melayani radio.
+    mpu.calcGyroOffsets(true, 0, 0);
+    mpuCalibrated = true;
+  }
+  mpu.update();
+  return true;
+}
+
+// Kode status MPU yang ikut dikirim pada telemetri (bidang "S").
+// ESP32 di robot sering tidak bisa dicolok Serial saat sudah terpasang, jadi
+// hasil diagnosa HARUS bisa dibaca dari GUI lewat radio — bukan cuma dari
+// Serial monitor. Satu digit ini cukup untuk membedakan semua penyebab yang
+// selama ini tampil sama saja di layar (sudut yang tidak masuk akal).
+//   1 = sehat
+//   0 = bus SEHAT (pull-up ada) tapi tak ada yang menjawab -> SDA/SCL tertukar
+//       atau chip MPU rusak
+//   2 = perangkat ada di 0x69, bukan 0x68   -> pin AD0 ke-HIGH
+//   3 = terbaca, tapi gyro belum terkalibrasi -> yaw merayap pelan
+//   4 = 0x68 meng-ACK tapi data tidak keluar -> kabel goyang / 3.3V drop
+//   5 = SDA & SCL diam di LOW (tanpa pull-up) -> modul tidak bertenaga,
+//       GND/VCC lepas, atau kabel putus
+uint8_t mpuStatusCode()
+{
+  if (mpuOk) return mpuCalibrated ? 1 : 3;
+  if (mpuAckNoData) return 4;
+  if (mpuAlt69) return 2;
+  return busIdleHigh ? 0 : 5;
+}
+
+// Pengganti mpu.update(): baca sensor, nilai kewarasannya, dan coba pulihkan
+// bus I2C bila mati. SEMUA pemanggilan mpu.update() di firmware ini lewat sini.
+void mpuUpdate()
+{
+  bool retryDue = (millis() - lastMpuRetryMs >= MPU_RETRY_INTERVAL_MS);
+
+  // MPU yang SUDAH DIKETAHUI MATI jangan dibaca tiap iterasi. Satu pembacaan
+  // gagal berarti dua transaksi I2C yang bisa memblokir sampai batas waktu
+  // 50 ms masing-masing. Di dalam loop gerak (yang hanya ber-delay 20 ms),
+  // itu membuat robot telat melayani radio sampai heartbeat 3 detik dianggap
+  // hilang — gerakan lalu dibatalkan diam-diam TANPA mengirim FIN, dan
+  // Pengendali Utama melaporkan "tidak ada FIN dalam 9 detik".
+  // Cukup dicoba lagi tiap MPU_RETRY_INTERVAL_MS; sudutnya toh tidak dipakai
+  // selagi mpuOk salah.
+  if (!mpuOk && !retryDue) return;
+
+  mpu.update();
+
+  // (a) ketiga sumbu akselerometer tepat -1 = tidak ada byte yang terbaca.
+  bool noReply = (mpu.getRawAccX() == -1 &&
+                  mpu.getRawAccY() == -1 &&
+                  mpu.getRawAccZ() == -1);
+
+  // (b) akselerometer sehat SELALU merasakan gravitasi ~1 g, apa pun posisinya.
+  float ax = mpu.getAccX(), ay = mpu.getAccY(), az = mpu.getAccZ();
+  float mag = sqrtf(ax * ax + ay * ay + az * az);
+
+  bool healthy = !noReply && (mag > ACC_MAG_MIN) && (mag < ACC_MAG_MAX);
+
+  if (healthy != mpuOk)
+  {
+    mpuOk = healthy;
+    if (mpuOk)
+      Serial.println("MPU OK — sudut valid, heading-hold & putaran closed-loop aktif");
+    else
+      Serial.println("!! MPU TIDAK MENJAWAB I2C — sudut TIDAK valid "
+                     "(cek SDA=21 / SCL=22 / 3.3V / GND)");
+  }
+
+  if (!mpuOk && retryDue)
+  {
+    lastMpuRetryMs = millis();
+    // checkBusIdle() sekalian memasang ulang bus (Wire.end() + Wire.begin()),
+    // jadi ia juga melepaskan bus dari kondisi nyangkut.
+    checkBusIdle();
+
+    // Cukup 2 detik sekali — murah, dan inilah yang membuat GUI bisa
+    // membedakan "kabel putus" dari "AD0 salah" tanpa colok Serial.
+    mpuAckNoData = mpuProbe();              // 0x68 ACK padahal data tak sehat
+    mpuAlt69     = i2cAck(MPU6050_ADDR_ALT);
+
+    // Kalibrasi HANYA bila belum pernah dilakukan DAN robot sedang diam.
+    // Tanpa syarat pertama, MPU yang baru terdeteksi setelah boot akan
+    // berjalan dengan gyroZoffset = 0 selamanya — gejalanya yaw merayap
+    // pelan-pelan dengan laju tetap walau robot tidak bergerak sama sekali.
+    bool bolehKalibrasi = (!mpuCalibrated && !moveInProgress);
+    if (initMPU(bolehKalibrasi))
+    {
+      if (bolehKalibrasi)
+        Serial.println("MPU tersambung — offset gyro BARU dihitung");
+      else
+        Serial.println("MPU tersambung kembali — offset gyro lama dipakai");
+    }
+  }
+}
+
+// Yaw yang merayap tetap walau robot diam = gyro belum terkalibrasi.
+// Dipanggil saat menganggur supaya tidak pernah menahan gerakan.
+void maybeCalibrateWhenIdle()
+{
+  if (mpuOk && !mpuCalibrated && !moveInProgress)
+  {
+    Serial.println("Gyro belum terkalibrasi — robot harus DIAM sebentar...");
+    mpu.calcGyroOffsets(true, 0, 0);
+    mpuCalibrated = true;
+    mpu.update();
+    lastSignalMs = millis();   // kalibrasi memakan ~2 s: jangan picu failsafe
+    Serial.println("Kalibrasi gyro selesai — yaw seharusnya berhenti merayap");
+  }
+}
 
 // =========================================
 // KENDALI MOTOR
@@ -159,6 +397,27 @@ void sendOn(const char *move)
   lastOnMs = millis();
 }
 
+// --- Pengiriman ulang FIN -------------------------------------------------
+// FIN dikirim NOACK (fire-and-forget) dan dulu hanya SEKALI. Radio ini
+// half-duplex: kalau paket FIN itu kebetulan lepas saat Pengendali Utama
+// sedang giliran mengirim, paketnya hilang selamanya. Gerakan yang sebenarnya
+// SUDAH TUNTAS lalu terlihat "tidak direspon", dan seluruh sisa antrean misi
+// dibatalkan. Berbeda dengan "ON" yang memang diulang tiap 1 detik, FIN tidak
+// punya jaring pengaman sama sekali.
+//
+// Karena itu FIN kini diulang beberapa kali. Pengulangan DIHENTIKAN begitu
+// perintah gerak berikutnya datang — itu bukti Pengendali Utama sudah
+// menerimanya, sekaligus mencegah FIN basi tertukar dengan FIN perintah
+// berikutnya bila jenis geraknya sama (mis. FW:200 dua kali berturut-turut).
+
+char finMove[8] = "";
+int  finDist = 0;
+uint8_t finRepeatsLeft = 0;
+unsigned long lastFinMs = 0;
+
+#define FIN_REPEAT_MS    150
+#define FIN_REPEAT_COUNT 6
+
 // "FIN [Moves]:[Dist]" — perintah selesai dieksekusi dengan baik.
 void sendFin(const char *move, int dist)
 {
@@ -166,17 +425,70 @@ void sendFin(const char *move, int dist)
   snprintf(buf, sizeof(buf), "FIN %s:%d", move, dist);
   sendPacket(buf);
   Serial.print(">> "); Serial.println(buf);
+
+  strncpy(finMove, move, sizeof(finMove) - 1);
+  finMove[sizeof(finMove) - 1] = '\0';
+  finDist = dist;
+  finRepeatsLeft = FIN_REPEAT_COUNT;
+  lastFinMs = millis();
 }
+
+void maybeResendFin()
+{
+  if (finRepeatsLeft == 0) return;
+  if (millis() - lastFinMs < FIN_REPEAT_MS) return;
+
+  lastFinMs = millis();
+  finRepeatsLeft--;
+
+  char buf[24];
+  snprintf(buf, sizeof(buf), "FIN %s:%d", finMove, finDist);
+  sendPacket(buf);
+}
+
+// Pengendali Utama sudah lanjut -> hentikan pengulangan FIN lama.
+void clearPendingFin() { finRepeatsLeft = 0; }
+
+// --- Ledakan "ON" di awal gerakan ----------------------------------------
+// Balapan turnaround half-duplex: Pengendali Utama baru saja SELESAI mengirim
+// perintah dan belum tentu sudah pindah ke mode dengar, sedangkan robot
+// membalas "ON" dalam hitungan mikrodetik. "ON" pertama karena itu gampang
+// terlewat. Karena ulangan berikutnya baru datang 1 detik kemudian — persis
+// sama dengan batas tunggu Pengendali Utama — perintahnya kerap dianggap
+// gagal lalu dikirim ulang, memboroskan 1 detik per kejadian.
+//
+// Solusinya: beberapa "ON" tambahan berjarak dekat di awal gerakan saja.
+// Irama 1 detik yang diminta dokumen spesifikasi tetap dipertahankan sesudahnya.
+
+uint8_t onBurstLeft = 0;
+unsigned long lastOnBurstMs = 0;
+
+#define ON_BURST_MS    120
+#define ON_BURST_COUNT 3
 
 // Kirim "ON" bila sudah lewat 1 detik sejak kiriman terakhir.
 void maybeSendOn()
 {
-  if (moveInProgress && (millis() - lastOnMs >= ON_INTERVAL_MS))
+  if (!moveInProgress) return;
+
+  if (onBurstLeft && (millis() - lastOnBurstMs >= ON_BURST_MS))
+  {
+    lastOnBurstMs = millis();
+    onBurstLeft--;
+    sendOn(currentMove);     // sendOn() menyegarkan lastOnMs juga
+    return;
+  }
+
+  if (millis() - lastOnMs >= ON_INTERVAL_MS)
     sendOn(currentMove);
 }
 
 // Telemetri sudut MPU (di luar spesifikasi wajib — dipakai panel sensor GUI).
-// Format ASCII: "R=<roll>;P=<pitch>;Y=<yaw>"
+// Format ASCII: "R=<roll>;P=<pitch>;Y=<yaw>;S=<kode>"
+// Kode status lihat mpuStatusCode(). Bidang S ditaruh di belakang supaya
+// pembaca lama (regex R=..;P=..;Y=..) tetap cocok.
+// Panjang maksimum "R=-180.0;P=-180.0;Y=-180.0;S=4" = 30 byte + NUL = 31,
+// masih di bawah batas 32 byte payload NRF24.
 void maybeSendTelemetry()
 {
   if (millis() - lastTelemetryMs < TELEMETRY_INTERVAL_MS)
@@ -184,8 +496,9 @@ void maybeSendTelemetry()
   lastTelemetryMs = millis();
 
   char tel[32];
-  snprintf(tel, sizeof(tel), "R=%.1f;P=%.1f;Y=%.1f",
-           mpu.getAngleX(), mpu.getAngleY(), mpu.getAngleZ());
+  snprintf(tel, sizeof(tel), "R=%.1f;P=%.1f;Y=%.1f;S=%d",
+           wrap180(mpu.getAngleX()), wrap180(mpu.getAngleY()),
+           wrap180(mpu.getAngleZ()), mpuStatusCode());
   sendPacket(tel);
 }
 
@@ -251,7 +564,7 @@ MoveResult checkAbort()
 
 MoveResult executeForward(int distCm)
 {
-  mpu.update();
+  mpuUpdate();
   float targetYaw = mpu.getAngleZ();
   unsigned long durationMs =
       (unsigned long)((distCm / 100.0f) / ROBOT_SPEED_MPS * 1000.0f);
@@ -262,7 +575,7 @@ MoveResult executeForward(int distCm)
 
   while (millis() - start < durationMs)
   {
-    mpu.update();
+    mpuUpdate();
 
     MoveResult r = checkAbort();
     if (r != MOVE_DONE) return r;
@@ -271,8 +584,10 @@ MoveResult executeForward(int distCm)
     while (err >  180) err -= 360;   // normalisasi ke -180..180
     while (err < -180) err += 360;
 
+    // MPU mati -> err dihitung dari sudut palsu. Lebih baik maju lurus dengan
+    // dua motor sama besar daripada dikoreksi ke arah yang ngawur.
     int correction = 0;
-    if (fabs(err) > HEADING_DEADBAND)
+    if (mpuOk && fabs(err) > HEADING_DEADBAND)
     {
       correction = (int)(KP_HEADING * err);
       correction = constrain(correction, -MAX_CORRECTION, MAX_CORRECTION);
@@ -297,22 +612,40 @@ MoveResult executeForward(int distCm)
 
 MoveResult executeTurn(int deg, bool clockwise)
 {
-  mpu.update();
+  mpuUpdate();
   float startYaw = mpu.getAngleZ();
-  unsigned long limitMs = (unsigned long)(deg / TURN_RATE_DPS * 3000.0f) + 3000;
+
+  // Perkiraan lama putaran bila dijalankan open-loop (tanpa umpan balik yaw).
+  unsigned long openLoopMs = (unsigned long)(deg / TURN_RATE_DPS * 1000.0f);
+  // Batas waktu pengaman mode closed-loop: 3x perkiraan + 3 detik.
+  unsigned long limitMs = openLoopMs * 3 + 3000;
   unsigned long start = millis();
 
   Serial.print(clockwise ? "CW " : "CCW ");
-  Serial.print(deg); Serial.println(" derajat");
+  Serial.print(deg); Serial.print(" derajat");
+  Serial.println(mpuOk ? " (closed-loop yaw)"
+                       : " (OPEN-LOOP — MPU mati, sudut akhir tidak dijamin)");
 
   if (clockwise) spinCW(); else spinCCW();
 
   while (millis() - start < limitMs)
   {
-    mpu.update();
+    mpuUpdate();
 
     MoveResult r = checkAbort();
     if (r != MOVE_DONE) return r;
+
+    if (!mpuOk)
+    {
+      // Tanpa yaw yang sah, acuan satu-satunya tinggal waktu. Berhenti di
+      // perkiraan open-loop — JANGAN dibiarkan berjalan sampai limitMs, sebab
+      // itu 3x lebih lama dan robot akan berputar jauh melewati sudut yang
+      // diminta. (Inilah yang terjadi sebelum perbaikan: sudut tidak pernah
+      // tercapai karena sensor mati, jadi setiap CW/CCW selalu habis timeout.)
+      if (millis() - start >= openLoopMs) break;
+      delay(20);
+      continue;
+    }
 
     float delta = mpu.getAngleZ() - startYaw;
     while (delta >  180) delta -= 360;
@@ -340,10 +673,14 @@ void runMove(const char *move, int dist)
   currentMove[sizeof(currentMove) - 1] = '\0';
   moveInProgress = true;
   stopRequested = false;
+  clearPendingFin();   // perintah baru datang = FIN sebelumnya sudah diterima
 
   // "ON" pertama dikirim SEGERA: Pengendali Utama hanya menunggu 1 detik
-  // sebelum menganggap perintah gagal dan mengirimnya ulang.
+  // sebelum menganggap perintah gagal dan mengirimnya ulang. Beberapa ulangan
+  // rapat menyusul supaya satu paket yang terlewat tidak memicu kirim ulang.
   sendOn(currentMove);
+  onBurstLeft = ON_BURST_COUNT;
+  lastOnBurstMs = millis();
 
   MoveResult result;
   if (strcmp(move, "FW") == 0)
@@ -443,9 +780,54 @@ void setup()
   Serial.println("Radio Ready (listening)");
 
   // MPU
-  Wire.begin(21, 22);
-  mpu.begin();
-  mpu.calcGyroOffsets(true);
+  // Bus di-probe DULU sebelum mpu.begin(). Tanpa probe, library tockn tetap
+  // "berhasil" walau tidak ada perangkat sama sekali — ia hanya menulis ke
+  // bus tanpa memeriksa ACK, lalu membaca -1 terus-menerus dan melaporkan
+  // Roll=-90 / Pitch=+90 / Yaw=-0.0 yang beku (lihat catatan di atas).
+  Wire.begin(SDA_PIN, SCL_PIN);
+  Wire.setClock(I2C_HZ);
+  Wire.setTimeOut(50);          // ms — bus nyangkut tidak boleh nge-hang robot
+
+  delay(100);                   // beri MPU waktu selesai power-on reset
+
+  checkBusIdle();
+  Serial.print("Level diam SDA/SCL: ");
+  Serial.println(busIdleHigh
+      ? "HIGH (pull-up terpasang, modul bertenaga)"
+      : "LOW  <- tidak ada pull-up: modul TIDAK bertenaga / GND-VCC lepas / kabel putus");
+
+  i2cScanReport();              // cetak APA yang benar-benar ada di bus
+
+  // Dicatat sejak boot supaya paket telemetri PERTAMA pun sudah membawa
+  // hasil diagnosa ke GUI — robot yang sudah terpasang biasanya tidak bisa
+  // lagi dicolok kabel Serial.
+  mpuAlt69     = i2cAck(MPU6050_ADDR_ALT);
+  mpuAckNoData = mpuProbe();
+
+  if (mpuProbe())
+  {
+    uint8_t who = mpuWhoAmI();
+    Serial.print("MPU6050 di 0x68, WHO_AM_I = 0x");
+    Serial.println(who, HEX);
+    if (who != 0x68)
+      Serial.println("   (catatan: bukan 0x68 — modul klon, biasanya tetap jalan)");
+
+    Serial.println("Kalibrasi gyro — robot harus DIAM & DATAR, jangan disentuh");
+    initMPU(true);              // kalibrasi offset gyro: robot harus DIAM & DATAR
+    mpuUpdate();
+    Serial.print("Offset gyro  X="); Serial.print(mpu.getGyroXoffset());
+    Serial.print("  Y=");            Serial.print(mpu.getGyroYoffset());
+    Serial.print("  Z=");            Serial.println(mpu.getGyroZoffset());
+  }
+  else
+  {
+    Serial.println("!! MPU6050 TIDAK menjawab di I2C 0x68");
+    Serial.println("   Baca hasil pemindaian di atas:");
+    Serial.println("   - KOSONG        -> kabel/daya: SDA=GPIO21, SCL=GPIO22,");
+    Serial.println("                      VCC=3.3V, GND robot & MPU HARUS nyambung.");
+    Serial.println("   - ada 0x69      -> pin AD0 modul ke-HIGH. Sambungkan AD0 ke GND.");
+    Serial.println("   Robot tetap jalan, tapi FW/CW/CCW open-loop tanpa heading-hold.");
+  }
 
   // ESC
   // ESP32Servo WAJIB alokasi timer dulu sebelum attach; kalau tidak,
@@ -467,7 +849,9 @@ void setup()
 
 void loop()
 {
-  mpu.update();
+  mpuUpdate();
+  maybeCalibrateWhenIdle();   // menyusul bila MPU baru terdeteksi setelah boot
+  maybeResendFin();           // jaring pengaman bila FIN pertama hilang
 
   if (radio.available())
   {

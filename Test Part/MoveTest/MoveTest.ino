@@ -12,7 +12,26 @@
 #include <ESP32Servo.h>
 #include <math.h>
 
+#define SDA_PIN 21
+#define SCL_PIN 22
+#define I2C_HZ  100000UL
+
 MPU6050 mpu(Wire);
+
+// --- Deteksi MPU mati (disamakan dengan Finalnew.ino) ---------------------
+// Kalau I2C tidak menjawab, Wire.read() mengembalikan -1 untuk SEMUA byte,
+// dan MPU6050_tockn menerjemahkannya jadi sudut yang BEKU di
+//     Roll = -90.0   Pitch = +90.0   Yaw = -0.0
+// (atan2(-6.1e-5, 0) = -90 derajat PAS). Angka itu tanda sensor tak terbaca,
+// BUKAN hasil pengukuran — dan kalau dipakai heading-hold, robot dikemudikan
+// oleh sudut palsu. Jadi harus dideteksi, bukan dipercaya.
+
+bool mpuOk = false;
+unsigned long lastMpuRetryMs = 0;
+
+#define MPU_RETRY_INTERVAL_MS 2000
+#define ACC_MAG_MIN 0.30f          // |a| wajar (g) — sensor sehat merasakan ~1 g
+#define ACC_MAG_MAX 3.00f
 
 Servo escLeft;
 Servo escRight;
@@ -33,6 +52,55 @@ Servo escRight;
 #define TEST_LEBAR        2    // meter
 
 bool missionDone = false;
+
+// ===== MPU: probe, init, update ber-pengawasan =====
+
+bool mpuProbe()
+{
+  Wire.beginTransmission(MPU6050_ADDR);
+  return Wire.endTransmission() == 0;   // 0 = ada yang meng-ACK 0x68
+}
+
+bool initMPU(bool calibrate)
+{
+  if (!mpuProbe()) return false;
+  mpu.begin();
+  if (calibrate) mpu.calcGyroOffsets(true);
+  mpu.update();
+  return true;
+}
+
+// Pengganti mpu.update(): SEMUA pembacaan MPU di sketch ini lewat sini.
+void mpuUpdate()
+{
+  mpu.update();
+
+  bool noReply = (mpu.getRawAccX() == -1 &&
+                  mpu.getRawAccY() == -1 &&
+                  mpu.getRawAccZ() == -1);
+  float ax = mpu.getAccX(), ay = mpu.getAccY(), az = mpu.getAccZ();
+  float mag = sqrtf(ax * ax + ay * ay + az * az);
+  bool healthy = !noReply && (mag > ACC_MAG_MIN) && (mag < ACC_MAG_MAX);
+
+  if (healthy != mpuOk)
+  {
+    mpuOk = healthy;
+    Serial.println(mpuOk
+        ? "MPU OK — heading-hold aktif"
+        : "!! MPU TIDAK MENJAWAB I2C — heading-hold DIMATIKAN "
+          "(cek SDA=21 / SCL=22 / 3.3V / GND)");
+  }
+
+  if (!mpuOk && (millis() - lastMpuRetryMs >= MPU_RETRY_INTERVAL_MS))
+  {
+    lastMpuRetryMs = millis();
+    Wire.begin(SDA_PIN, SCL_PIN);
+    Wire.setClock(I2C_HZ);
+    Wire.setTimeOut(50);
+    if (initMPU(false))
+      Serial.println("MPU tersambung kembali");
+  }
+}
 
 void stopBoat()
 {
@@ -61,13 +129,15 @@ void driveHeadingMS(float targetYaw, unsigned long durationMs)
   unsigned long start = millis();
   while (millis() - start < durationMs)
   {
-    mpu.update();
+    mpuUpdate();
     float err = targetYaw - mpu.getAngleZ();
     while (err >  180) err -= 360;
     while (err < -180) err += 360;
 
+    // MPU mati -> err dihitung dari sudut palsu. Lebih baik maju lurus
+    // dengan dua motor sama besar daripada dikoreksi ke arah yang ngawur.
     int correction = 0;
-    if (fabs(err) > HEADING_DEADBAND)
+    if (mpuOk && fabs(err) > HEADING_DEADBAND)
     {
       correction = (int)(KP_HEADING * err);
       correction = constrain(correction, -MAX_CORRECTION, MAX_CORRECTION);
@@ -79,7 +149,8 @@ void driveHeadingMS(float targetYaw, unsigned long durationMs)
 
     Serial.print("Yaw: ");   Serial.print(mpu.getAngleZ());
     Serial.print("  Err: "); Serial.print(err);
-    Serial.print("  Corr: ");Serial.println(correction);
+    Serial.print("  Corr: ");Serial.print(correction);
+    Serial.println(mpuOk ? "" : "   [MPU MATI - sudut tidak sah]");
     delay(50);
   }
   stopBoat();
@@ -91,7 +162,7 @@ void turnRight90()
   turnRight();
   while (millis() - start < TURN_90_MS)
   {
-    mpu.update();
+    mpuUpdate();
     delay(20);
   }
   stopBoat();
@@ -101,9 +172,24 @@ void setup()
 {
   Serial.begin(115200);
 
-  Wire.begin(21, 22);
-  mpu.begin();
-  mpu.calcGyroOffsets(true);
+  // Bus di-probe DULU: library tockn tidak memeriksa ACK, jadi mpu.begin()
+  // tetap "berhasil" walau tidak ada sensor sama sekali.
+  Wire.begin(SDA_PIN, SCL_PIN);
+  Wire.setClock(I2C_HZ);
+  Wire.setTimeOut(50);
+
+  if (mpuProbe())
+  {
+    Serial.println("MPU6050 terdeteksi di 0x68 — kalibrasi gyro, JANGAN digerakkan");
+    initMPU(true);
+    mpuUpdate();
+  }
+  else
+  {
+    Serial.println("!! MPU6050 TIDAK terdeteksi di I2C 0x68");
+    Serial.println("   cek SDA=GPIO21, SCL=GPIO22, VCC=3.3V, GND, AD0->GND.");
+    Serial.println("   Tes tetap jalan, tapi TANPA heading-hold.");
+  }
 
   // ESP32Servo WAJIB alokasi timer dulu sebelum attach; kalau tidak,
   // PWM ke ESC bisa gagal diam-diam -> baling-baling nggak gerak.
@@ -134,18 +220,29 @@ void loop()
     delay(1000);
   }
 
-  int nLanes = (int)ceil((float)TEST_LEBAR / LANE_WIDTH_M);
-  unsigned long laneMs  = (unsigned long)((float)TEST_PANJANG / ROBOT_SPEED_MPS * 1000.0f);
-  unsigned long shiftMs = (unsigned long)(LANE_WIDTH_M / ROBOT_SPEED_MPS * 1000.0f);
+  // Geometri jalur DISAMAKAN dengan path planner di Pengendali Utama
+  // (feeder_core.plan_coverage): lebar dibagi jadi nBands pita, lalu jalur
+  // ditaruh di SETIAP pembatas pita termasuk kedua tepi -> nLanes = nBands+1.
+  // Jarak geser antar-jalur = spasi pita, bukan LANE_WIDTH_M mentah; kalau
+  // memakai LANE_WIDTH_M, jalur terakhir tidak sampai ke tepi seberang.
+  int nBands = (int)ceil((float)TEST_LEBAR / LANE_WIDTH_M);
+  if (nBands < 1) nBands = 1;
+  int nLanes = nBands + 1;
+  float spacingM = (float)TEST_LEBAR / nBands;
 
-  Serial.print("Jumlah jalur: "); Serial.println(nLanes);
+  unsigned long laneMs  = (unsigned long)((float)TEST_PANJANG / ROBOT_SPEED_MPS * 1000.0f);
+  unsigned long shiftMs = (unsigned long)(spacingM / ROBOT_SPEED_MPS * 1000.0f);
+
+  Serial.print("Jumlah jalur: "); Serial.print(nLanes);
+  Serial.print("  spasi antar-jalur: "); Serial.print(spacingM);
+  Serial.println(" m");
 
   for (int lane = 0; lane < nLanes; lane++)
   {
     Serial.print("\n=== Jalur "); Serial.print(lane + 1);
     Serial.print("/"); Serial.print(nLanes); Serial.println(" ===");
 
-    mpu.update();
+    mpuUpdate();
     float targetYaw = mpu.getAngleZ();
     driveHeadingMS(targetYaw, laneMs);
     delay(500);
@@ -154,7 +251,7 @@ void loop()
     {
       turnRight90();
       delay(300);
-      mpu.update();
+      mpuUpdate();
       float shiftYaw = mpu.getAngleZ();
       driveHeadingMS(shiftYaw, shiftMs);
       delay(300);

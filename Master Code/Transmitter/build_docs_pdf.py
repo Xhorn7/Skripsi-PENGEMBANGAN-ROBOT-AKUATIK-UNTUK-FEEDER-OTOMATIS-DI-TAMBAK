@@ -378,8 +378,9 @@ table(["Paket", "Arah", "Makna"],
         "Heartbeat (jaga failsafe robot) tiap 0,5 s + pemicu giliran bicara robot"],
        ["(ACK otomatis)", "Robot -&gt; Pi",
         "Auto-ACK NRF; True = robot hidup &amp; terjangkau"],
-       ["R=&lt;roll&gt;;P=&lt;pitch&gt;;Y=&lt;yaw&gt;", "Robot -&gt; Pi",
-        "Telemetri MPU (tambahan di luar spesifikasi wajib) — alamat balik 00002, NOACK"]],
+       ["R=&lt;roll&gt;;P=&lt;pitch&gt;;Y=&lt;yaw&gt;;S=&lt;0|1&gt;", "Robot -&gt; Pi",
+        "Telemetri MPU (tambahan di luar spesifikasi wajib) — alamat balik 00002, NOACK. "
+        "S=1 sudut sah, S=0 MPU tidak menjawab I2C"]],
       [4.6 * cm, 2.6 * cm, 7.8 * cm])
 p("<b>Daftar perintah</b> beserta rentang [Dist] yang sah (tabel perintah pada dokumen "
   "spesifikasi). GUI menolak nilai di luar rentang ini sebelum paket dikirim, dan "
@@ -440,7 +441,12 @@ p("Data orientasi diambil <b>langsung dari sensor MPU6050</b> (bukan estimasi). 
 code("Robot --(NRF, alamat 00002)--&gt; RadioLink.pump() --&gt; get_telemetry()\n"
      "                                          |\n"
      "                                    MPUMonitor.poll() --&gt; tampilan + log")
-p("Format yang di-parse: <b>R=&lt;roll&gt;;P=&lt;pitch&gt;;Y=&lt;yaw&gt;</b>. Kelas "
+p("Format yang di-parse: <b>R=&lt;roll&gt;;P=&lt;pitch&gt;;Y=&lt;yaw&gt;;S=&lt;0|1&gt;</b>. "
+  "Bidang <b>S</b> adalah status kesehatan MPU yang dilaporkan firmware: bila robot "
+  "tidak dapat membaca sensornya lewat I2C, sudut yang terkirim hanyalah nilai beku "
+  "(khasnya Roll=-90,0 / Pitch=90,0 / Yaw=-0,0) sehingga GUI menampilkannya "
+  "<b>merah disertai peringatan</b>, bukan sebagai data sungguhan. Bidang S berada di "
+  "ekor paket agar firmware lama yang belum mengirimnya tetap dikenali. Kelas "
   "<b>MPUMonitor</b> menyimpan cuplikan terakhir beserta sumber &amp; umurnya, "
   "<b>menyaring paket kembar</b> (poll dipanggil jauh lebih sering daripada laju "
   "telemetri, jadi paket yang sama akan terlihat berkali-kali), lalu mencatat satu baris "
@@ -515,17 +521,33 @@ p("Selanjutnya <b>plan_command_queue()</b> mengubah daftar langkah itu menjadi "
   "yang tak bisa diperintahkan). Belok kanan menjadi <b>CW</b>, belok kiri menjadi "
   "<b>CCW</b>.")
 p("Koordinat: sumbu-x menyusuri lebar, sumbu-y menyusuri panjang. Robot menjelajah "
-  "lurus arah-y tiap lintasan, lalu U-turn menggeser sejauh satu lebar lintasan arah-x.")
-code("Contoh: tambak 10 x 4 m, lebar lintasan 1 m, mulai Kiri-Bawah -> 4 lintasan\n"
+  "lurus arah-y tiap lintasan, lalu U-turn menggeser sejauh <b>satu spasi jalur</b> "
+  "arah-x.")
+p("<b>Jalur pertama dan terakhir menempel di tepi tambak.</b> Lebar dibagi menjadi "
+  "<b>nBands = &#8968;lebar / lebar lintasan&#8969;</b> pita selebar "
+  "<b>spasi = lebar / nBands</b> (selalu &le; lebar lintasan yang diminta), lalu jalur "
+  "ditaruh di <b>setiap garis pembatas pita</b> &mdash; termasuk x = 0 dan x = lebar. "
+  "Jumlah jalur karena itu <b>nBands + 1</b>. Pada tambak 2&times;2 m dengan lintasan "
+  "1 m dihasilkan 3 jalur di x = 0, 1, dan 2 m, sehingga lintasan benar-benar mencapai "
+  "ujung kotak di kedua sisi. Kekeliruan yang mudah terjadi adalah menaruh jalur pertama "
+  "di tepi lalu menggesernya sejauh lebar lintasan <i>tanpa menambah jumlah jalur</i>: "
+  "sisi seberang tidak pernah dijadikan jalur dan tambak 2&times;2 m hanya tersapu "
+  "separuh.")
+note("Konsekuensi yang disengaja: robot melintas tepat di sisi dinding tambak dan "
+     "separuh sapuan jalur tepi jatuh di luar tambak. Bila yang diutamakan adalah jarak "
+     "aman dari dinding, jalur perlu digeser masuk setengah spasi &mdash; dengan "
+     "konsekuensi lintasan tidak lagi menyentuh ujung kotak.")
+code("Contoh: tambak 10 x 4 m, lebar lintasan 1 m, mulai Kiri-Bawah\n"
+     "        nBands = 4, spasi = 4/4 = 1 m -> 5 lintasan di x = 0/1/2/3/4 m\n"
      "\n"
-     "  Langkah jalur                  Antrean perintah kendali (29 paket)\n"
+     "  Langkah jalur                  Antrean perintah kendali (37 paket)\n"
      "  1. Maju 10.0 m           ->    FW:200  FW:200  FW:200  FW:200  FW:200\n"
      "  2. Belok kanan 90        ->    CW:90\n"
      "  3. Maju 1.0 m            ->    FW:100\n"
      "  4. Belok kanan 90        ->    CW:90\n"
      "  5. Maju 10.0 m           ->    FW:200 x5\n"
      "  6. Belok kiri 90         ->    CCW:90\n"
-     "  ...                            (dst hingga seluruh lebar tersapu)")
+     "  ...                            (dst hingga Lane 5 di tepi kanan)")
 p("<b>Pola belok berselang-seling.</b> U-turn yang <b>selalu belok kanan</b> secara "
   "geometri menggeser robot ke kanan lalu ke kiri bergantian, sehingga robot hanya "
   "bolak-balik di dua kolom dan <b>tidak menyapu seluruh lebar tambak</b>. Arah U-turn "

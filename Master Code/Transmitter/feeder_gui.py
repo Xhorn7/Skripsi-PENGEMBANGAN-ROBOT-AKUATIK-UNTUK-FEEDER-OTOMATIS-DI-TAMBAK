@@ -1279,12 +1279,13 @@ class FeederGUI(ctk.CTk):
         c.create_rectangle(x0, y1, x1, y0, outline="#2c6da3",
                            width=self.px(2), fill="#12232e")
 
-        # garis bantu antar-lintasan
-        n = 1
-        while n * plan.lane_width_m < pond_w - 1e-9:
-            gx, _ = tx(n * plan.lane_width_m, 0)
+        # Garis bantu = pembatas pita sapuan bagian DALAM saja. Jalur sendiri
+        # sudah berada di tiap pembatas (termasuk kedua tepi), jadi pembatas
+        # terluar tidak digambar ulang — sudah jadi dinding tambak.
+        spacing = plan.lane_spacing_m or (pond_w / max(1, plan.n_lanes - 1))
+        for n in range(1, max(1, plan.n_lanes - 1)):
+            gx, _ = tx(n * spacing, 0)
             c.create_line(gx, y1, gx, y0, fill="#1c3a4d")
-            n += 1
 
         # jalur (polyline berpanah)
         pts = [tx(px_, py_) for (px_, py_) in plan.waypoints]
@@ -1573,6 +1574,17 @@ class FeederGUI(ctk.CTk):
             text=f"Throttle {throttle_fraction(pwm)*100:.0f}% · "
                  f"{estimate_speed_mps(pwm):.2f} m/s · PWM {pwm}µs")
 
+    def _log_mpu_problem(self, problem: str):
+        """
+        Catat masalah MPU ke log aktivitas — SEKALI per perubahan, bukan tiap
+        tick (dipanggil ~8x/detik). Lewat log berarti ikut tersimpan ke berkas
+        TXT auto-simpan, jadi bisa dibaca lagi setelah pengujian di lapangan.
+        """
+        if problem == getattr(self, "_last_mpu_problem", None):
+            return
+        self._last_mpu_problem = problem
+        self.logger.log("SENSOR", f"MPU bermasalah — {problem}")
+
     def _refresh_mpu(self):
         """
         Tarik cuplikan MPU terbaru (dan catat bila log MPU menyala). Dipanggil
@@ -1588,10 +1600,24 @@ class FeederGUI(ctk.CTk):
                 text_color=COLOR_IDLE)
             return
 
+        # Firmware ikut mengirim kode status MPU-nya. Kalau ada masalah, robot
+        # biasanya sudah terpasang & tidak bisa dicolok Serial — jadi sebab
+        # persisnya ditampilkan di sini, bukan cuma "MPU bermasalah".
+        angka_warna = COLOR_OK if sample.valid else COLOR_BAD
         for key, v in zip(("roll", "pitch", "yaw"),
                           (sample.roll, sample.pitch, sample.yaw)):
-            self.mpu_tiles[key].configure(text=f"{v:.1f}°", text_color=COLOR_OK)
+            self.mpu_tiles[key].configure(text=f"{v:.1f}°", text_color=angka_warna)
 
+        if sample.problem:
+            # valid=True + ada problem = sudut terbaca tapi perlu perhatian
+            # (mis. gyro belum terkalibrasi) -> oranye, bukan merah.
+            self.lbl_mpu_src.configure(
+                text=sample.problem,
+                text_color=COLOR_BAD if not sample.valid else COLOR_WARN)
+            self._log_mpu_problem(sample.problem)
+            return
+
+        self._last_mpu_problem = ""      # sehat lagi -> masalah berikutnya dicatat
         catat = (f"log AKTIF · {self.mpu.logged} baris tercatat"
                  if self.mpu.log_enabled else "log MPU nonaktif")
         self.lbl_mpu_src.configure(

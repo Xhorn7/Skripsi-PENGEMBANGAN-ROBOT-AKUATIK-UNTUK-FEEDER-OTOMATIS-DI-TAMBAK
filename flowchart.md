@@ -30,7 +30,7 @@ flowchart TB
     end
 
     R == "perintah — addr 00001<br/>FW:200 · CW:90 · CCW:90 · STOP:0" ==> C
-    D -. "sinyal balik — addr 00002<br/>ON [Moves] · FIN [Moves]:[Dist] · R=;P=;Y=" .-> T
+    D -. "sinyal balik — addr 00002<br/>ON [Moves] · FIN [Moves]:[Dist] · R=;P=;Y=;S=" .-> T
 ```
 
 > **Perubahan peran robot.** Pola zigzag kini disusun & dikemudikan Pengendali Utama; robot hanya eksekutor satu perintah. Mengubah pola jalur cukup di aplikasi, tanpa flash ulang ESP32.
@@ -248,8 +248,9 @@ Terjemahan tambak persegi menjadi daftar paket Sinyal Kendali, seluruhnya di sis
 
 ```mermaid
 flowchart TD
-    IN[/"Panjang, Lebar,<br/>Lebar lintasan, Kecepatan,<br/>Titik awal (sudut tambak)"/] --> N["nLanes = ⌈lebar / lebar lintasan⌉"]
-    N --> WP["Bangun waypoint zigzag<br/>x menyusuri lebar,<br/>y menyusuri panjang"]
+    IN[/"Panjang, Lebar,<br/>Lebar lintasan, Kecepatan,<br/>Titik awal (sudut tambak)"/] --> N["nBands = ⌈lebar / lebar lintasan⌉<br/>nLanes = nBands + 1"]
+    N --> SP["spasi = lebar / nBands<br/>jalur ke-k di k × spasi<br/>(k = 0..nBands, jadi<br/>x=0 dan x=lebar ikut)"]
+    SP --> WP["Bangun waypoint zigzag<br/>x menyusuri lebar,<br/>y menyusuri panjang"]
     WP --> SEG["Turunkan segmen:<br/>Maju x m / Belok kanan-kiri y°"]
     SEG --> DIR["Arah belok berselang-seling<br/>(R,R lalu L,L, dst)"]
     DIR --> SPLIT["split_forward:<br/>pecah RATA jadi FW 10-200 cm<br/>10 m → 5 × FW:200"]
@@ -263,6 +264,14 @@ flowchart TD
 > **Pemecahan dibuat RATA** agar tidak menyisakan potongan di bawah batas minimum. Contoh: 10,05 m menjadi 6 × 167 cm, bukan 5 × 200 cm + sisa 5 cm yang tak bisa diperintahkan.
 >
 > **Arah U-turn berselang-seling** (kanan-kanan lalu kiri-kiri, dst) sehingga geseran selalu ke sisi yang sama — sapuan menutupi seluruh lebar tambak (*boustrophedon*). Selalu belok kanan hanya menghasilkan bolak-balik di dua kolom.
+>
+> **Jalur pertama & terakhir MENEMPEL di tepi tambak.** Lebar dibagi menjadi `nBands = ⌈lebar / lebar lintasan⌉` pita selebar `spasi = lebar / nBands` (selalu ≤ lebar lintasan yang diminta), lalu jalur ditaruh di **setiap garis pembatas pita** — termasuk `x = 0` dan `x = lebar`. Jumlah jalur karena itu `nBands + 1`.
+>
+> Contoh tambak 2 × 2 m dengan lintasan 1 m → `nBands = 2`, **3 jalur** di `x = 0`, `1`, `2` m. Jalur benar-benar mencapai ujung kotak di kedua sisi.
+>
+> Kesalahan yang mudah terjadi adalah menaruh jalur pertama di tepi lalu menggeser sejauh lebar lintasan **tanpa menambah jumlah jalur**: sisi seberang tidak pernah dijadikan jalur, dan tambak 2 × 2 m hanya tersapu separuh.
+>
+> Konsekuensi yang disengaja: robot melintas tepat di sisi dinding tambak, dan separuh sapuan jalur tepi jatuh di luar tambak. Bila yang diinginkan adalah jarak aman dari dinding, jalur harus digeser masuk setengah spasi — tetapi jalur tidak lagi menyentuh ujung kotak.
 
 ---
 
@@ -284,7 +293,7 @@ sequenceDiagram
     alt sedang menjalankan gerakan
         Robot->>Pi: ON [Moves]  atau  FIN [Moves]:[Dist]
     else menganggur
-        Robot->>Pi: R=.. P=.. Y=.. (telemetri MPU, NOACK)
+        Robot->>Pi: R=.. P=.. Y=.. S=.. (telemetri MPU, NOACK)
     end
 
     Note over Robot: startListening lagi
@@ -297,38 +306,45 @@ Semua paket balik memakai alamat `00002`, terpisah dari alamat perintah `00001`.
 |---|---|
 | `FIN ` | Perintah selesai — izin lanjut ke perintah berikutnya |
 | `ON ` | Perintah sedang dijalankan |
-| `R=` | Telemetri sudut MPU |
+| `R=` | Telemetri sudut MPU — `R=<roll>;P=<pitch>;Y=<yaw>;S=<0\|1>` |
 
 > Telemetri MPU dikirim robot **hanya setelah ada paket masuk**, bukan tiap iterasi loop, supaya tidak bertabrakan dengan perintah yang sedang dikirim Pengendali Utama. Semuanya **NOACK** (*fire-and-forget*) agar robot tak nge-*block*.
+>
+> Bidang **`S`** adalah status kesehatan MPU: `S=1` sudut sah, `S=0` MPU tidak menjawab I2C sehingga sudut yang ikut terkirim hanya nilai beku. Bidang ini ada di ekor paket, jadi pembaca lama yang hanya mencari `R=..;P=..;Y=..` tetap cocok. Sudut di-*wrap* ke ±180° supaya paket tidak pernah melewati batas **32 byte** payload NRF24 (terpanjang: `R=-180.0;P=-180.0;Y=-180.0;S=0` = 31 byte dengan NUL).
 
 ---
 
 ## Pola Fisik Zigzag di Tambak
 
 ```
+x=0                                       x=lebar
+ │                                           │
+┌┴───────────────────────────────────────────┴┐
+│→→→→→→→→→→→→→→→→→ Lane 1 (di tepi kiri)      │
+│                                          ↓  │
+│←←←←←←←←←←←←←←←←← Lane 2                     │
+│↓                                            │
+│→→→→→→→→→→→→→→→→→ Lane 3                     │
+│                                          ↓  │
+│←←←←←←←←←←←←←←←←← Lane 4                     │
+│↓                                            │
+│→→→→→→→→→→→→→→→→→ Lane 5 (di tepi kanan)     │
+└─────────────────────────────────────────────┘
+ ▲    TAMBAK (panjang × lebar)
 START
- │
- ▼
-┌─────────────────────────────┐
-│ →→→→→→→→→→→→ Lane 1         │
-│                          ↓  │  U-turn (CW:90 ×2)
-│ ←←←←←←←←←←←← Lane 2        │
-│ ↓  U-turn (CCW:90 ×2)       │
-│ →→→→→→→→→→→→ Lane 3         │
-│                          ↓  │  U-turn (CW:90 ×2)
-│ ←←←←←←←←←←←← Lane 4   STOP│
-└─────────────────────────────┘
-     TAMBAK (panjang × lebar)
+
+Lebar 4 m dengan lintasan 1 m -> 4 pita, 5 jalur di x = 0/1/2/3/4 m.
+Jalur pertama & terakhir tepat di dinding tambak.
 ```
 
-Contoh nyata — tambak **10 × 4 m**, lebar lintasan 1 m, mulai Kiri-Bawah → 4 lintasan, **29 perintah**:
+Contoh nyata — tambak **10 × 4 m**, lebar lintasan 1 m, mulai Kiri-Bawah → 4 pita → **5 lintasan** (spasi 1 m, jalur di x = 0 / 1 / 2 / 3 / 4 m), **37 perintah**, 54,0 m, ~120 s:
 
 ```
-FW:200  FW:200  FW:200  FW:200  FW:200      Lane 1 (10 m dipecah 5x)
+FW:200  FW:200  FW:200  FW:200  FW:200      Lane 1 di x=0 (10 m dipecah 5x)
 CW:90   FW:100  CW:90                        U-turn kanan + geser 1 m
-FW:200  FW:200  FW:200  FW:200  FW:200      Lane 2
+FW:200  FW:200  FW:200  FW:200  FW:200      Lane 2 di x=1
 CCW:90  FW:100  CCW:90                       U-turn kiri + geser 1 m
-...                                          dst hingga Lane 4
+...                                          dst hingga Lane 5 di x=4
 ```
 
 > Arah U-turn berganti tiap lane agar geseran konsisten ke satu sisi dan menutupi seluruh lebar tambak.

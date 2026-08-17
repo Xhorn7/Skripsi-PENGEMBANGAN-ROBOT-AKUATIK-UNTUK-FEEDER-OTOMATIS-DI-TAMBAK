@@ -76,7 +76,27 @@ HEARTBEAT_INTERVAL_S = 0.5  # interval PING (harus < SIGNAL_TIMEOUT_MS)
 TELEMETRY_ADDR   = b"00002"   # alamat balik Robot -> Pi (beda dari perintah "00001")
 TELEMETRY_POLL_S = 0.07       # lama Pi mendengarkan telemetri tiap siklus (s)
 TELEMETRY_STALE_S = 2.0       # telemetri dianggap basi bila > ini (s)
-_TEL_RE = re.compile(r"R=(-?[\d.]+);P=(-?[\d.]+);Y=(-?[\d.]+)")
+# Bidang ";S=<kode>" di ekor paket adalah status kesehatan MPU dari firmware.
+# Opsional, supaya firmware lama yang belum mengirimnya tetap terbaca.
+_TEL_RE = re.compile(r"R=(-?[\d.]+);P=(-?[\d.]+);Y=(-?[\d.]+)(?:;S=(\d))?")
+
+# Kode status MPU -> (sudut boleh dipercaya?, penjelasan untuk operator).
+# ESP32 di robot umumnya sudah terpasang & tidak bisa dicolok Serial, jadi
+# diagnosa dikirim lewat radio dan diterjemahkan di sini.
+MPU_STATUS = {
+    0: (False, "Bus I2C sehat (pull-up ada) tapi MPU tidak menjawab — "
+               "SDA & SCL kemungkinan TERTUKAR, atau chip MPU rusak"),
+    1: (True,  ""),
+    2: (False, "MPU terdeteksi di 0x69, bukan 0x68 — pin AD0 modul ke-HIGH. "
+               "Sambungkan AD0 ke GND"),
+    3: (True,  "Gyro belum terkalibrasi — yaw akan merayap. Diamkan robot "
+               "sebentar, firmware mengkalibrasi sendiri"),
+    4: (False, "MPU meng-ACK tapi data tidak keluar — kabel I2C goyang, "
+               "terlalu panjang, atau catu 3.3V drop"),
+    5: (False, "SDA & SCL diam di LOW (tanpa pull-up) — modul MPU tidak "
+               "bertenaga: cek 3.3V, GND, dan solderan kabel SDA/SCL"),
+}
+MPU_STATUS_UNKNOWN = (False, "Status MPU tidak dikenali")
 
 
 # =====================================================================
@@ -290,10 +310,18 @@ class RadioLink:
         self.telemetry_addr = TELEMETRY_ADDR
         self._telemetry: tuple[float, float, float] | None = None
         self._telemetry_ts: float = 0.0
+        # Kode status MPU pada paket terakhir. Default 1 (sehat) supaya
+        # firmware lama yang belum mengirim ";S=" tidak memicu alarm palsu.
+        self._telemetry_status: int = 1
 
         # --- Sinyal balik protokol kendali: "ON [Moves]" & "FIN [Moves]:[Dist]" ---
         self._last_on: tuple[str, float] | None = None      # (move, waktu terima)
-        self._fin_inbox: list[tuple[str, int]] = []          # antrean FIN belum diambil
+        # Antrean FIN belum diambil, berikut WAKTU TERIMA-nya. Cap waktu itu
+        # wajib: robot mengulang FIN beberapa kali supaya tidak hilang, jadi
+        # FIN basi milik perintah sebelumnya harus bisa dibuang — kalau tidak,
+        # dua perintah sejenis berturut-turut (mis. FW:200 lalu FW:200) bisa
+        # membuat perintah kedua langsung dianggap selesai.
+        self._fin_inbox: list[tuple[str, int, float]] = []
         self._rx_lock = threading.Lock()
 
     # ---- lifecycle -------------------------------------------------
@@ -359,6 +387,7 @@ class RadioLink:
         self.clear_rx_state()
         self._telemetry = None
         self._telemetry_ts = 0.0
+        self._telemetry_status = 1
         self.last_ack_ms = 0.0
         self.last_error = ""
 
@@ -457,7 +486,8 @@ class RadioLink:
         m = _FIN_RE.match(text)
         if m:
             with self._rx_lock:
-                self._fin_inbox.append((m.group(1), int(m.group(2))))
+                self._fin_inbox.append((m.group(1), int(m.group(2)),
+                                        time.monotonic()))
             return True
 
         m = _ON_RE.match(text)
@@ -470,6 +500,8 @@ class RadioLink:
         if m:
             self._telemetry = (float(m.group(1)), float(m.group(2)),
                                float(m.group(3)))
+            # None = firmware lama tanpa bidang S -> anggap sehat (kode 1)
+            self._telemetry_status = int(m.group(4)) if m.group(4) else 1
             self._telemetry_ts = time.monotonic()
             return True
         return False
@@ -500,8 +532,13 @@ class RadioLink:
             last = self._last_on
         return bool(last and last[0] == move and last[1] >= since)
 
-    def take_fin(self) -> tuple[str, int] | None:
-        """Ambil (dan buang) satu sinyal 'FIN [Moves]:[Dist]' dari antrean."""
+    def take_fin(self) -> tuple[str, int, float] | None:
+        """
+        Ambil (dan buang) satu sinyal 'FIN [Moves]:[Dist]' dari antrean,
+        beserta waktu terimanya. Pemanggil WAJIB memeriksa waktu itu terhadap
+        saat perintahnya dikirim — robot mengulang FIN, jadi antrean bisa
+        berisi kiriman ulang milik perintah sebelumnya.
+        """
         with self._rx_lock:
             if self._fin_inbox:
                 return self._fin_inbox.pop(0)
@@ -520,6 +557,21 @@ class RadioLink:
         if (time.monotonic() - self._telemetry_ts) > TELEMETRY_STALE_S:
             return None
         return self._telemetry
+
+    def telemetry_status(self) -> int:
+        """Kode status MPU pada paket terakhir (lihat MPU_STATUS)."""
+        return self._telemetry_status
+
+    def telemetry_is_valid(self) -> bool:
+        """
+        False bila firmware melaporkan sudutnya tidak bisa dipercaya — mis.
+        MPU tidak menjawab I2C, sehingga angka yang terkirim hanya nilai beku.
+        """
+        return MPU_STATUS.get(self._telemetry_status, MPU_STATUS_UNKNOWN)[0]
+
+    def telemetry_problem(self) -> str:
+        """Penjelasan masalah MPU untuk operator; "" bila tidak ada masalah."""
+        return MPU_STATUS.get(self._telemetry_status, MPU_STATUS_UNKNOWN)[1]
 
     def get_telemetry_stamped(self) -> tuple[tuple[float, float, float], float] | None:
         """
@@ -696,6 +748,7 @@ class CoveragePlan:
     waypoints: list           # list[(x, y)] meter, utk kanvas
     total_distance_m: float
     est_time_s: float
+    lane_spacing_m: float = 0.0   # jarak antar-sumbu jalur (<= lane_width_m)
 
 
 def plan_coverage(panjang_m: float, lebar_m: float,
@@ -707,9 +760,21 @@ def plan_coverage(panjang_m: float, lebar_m: float,
 
     Koordinat: x menyusuri LEBAR (0..lebar), y menyusuri PANJANG (0..panjang).
     Robot menjelajah lurus arah-y tiap lintasan, lalu U-turn menggeser sejauh
-    lane_width arah-x. Arah belok U-turn BERSELANG-SELING (kanan-kanan lalu
-    kiri-kiri, dst) supaya benar-benar menyapu seluruh lebar — bukan bolak-balik
-    di kolom yang sama.
+    satu spasi jalur arah-x. Arah belok U-turn BERSELANG-SELING (kanan-kanan
+    lalu kiri-kiri, dst) supaya benar-benar menyapu seluruh lebar — bukan
+    bolak-balik di kolom yang sama.
+
+    GEOMETRI JALUR — jalur pertama & terakhir MENEMPEL di tepi tambak.
+    Lebar dibagi menjadi n_bands = ceil(lebar / lebar_lintasan) pita, lalu
+    jalur ditaruh di setiap GARIS PEMBATAS pita — termasuk kedua tepi tambak.
+    Jadi jumlah jalur = n_bands + 1, dengan spasi = lebar / n_bands (selalu
+    <= lebar lintasan yang diminta).
+
+        lebar 2 m, lintasan 1 m  ->  n_bands = 2, 3 jalur di x = 0, 1, 2
+
+    Konsekuensinya: robot melintas tepat di sisi dinding tambak, dan sapuan
+    jalur tepi separuhnya jatuh di luar tambak. Ini pilihan yang DISENGAJA
+    supaya jalur pada preview benar-benar mencapai ujung kotak di kedua sisi.
     """
     if start_corner not in CORNER_LABEL:
         start_corner = "BL"
@@ -720,13 +785,18 @@ def plan_coverage(panjang_m: float, lebar_m: float,
         return CoveragePlan(panjang_m, lebar_m, lw, spd, start_corner,
                             "R", 0, [], [], 0.0, 0.0)
 
-    n_lanes = max(1, int(math.ceil(lebar_m / lw)))
+    # Pita sapuan dulu, baru jalurnya. Jalur ditaruh di SETIAP garis pembatas
+    # pita — termasuk x=0 dan x=lebar — sehingga jumlahnya n_bands + 1 dan
+    # jalur pertama & terakhir menempel di tepi tambak.
+    n_bands = max(1, int(math.ceil(lebar_m / lw)))
+    n_lanes = n_bands + 1
+    spacing = lebar_m / n_bands               # selalu <= lebar lintasan
 
     x_left = start_corner in ("BL", "TL")     # mulai di sisi kiri (x=0)?
     bottom = start_corner in ("BL", "BR")     # mulai di sisi bawah (y=0)?
     x0 = 0.0 if x_left else lebar_m
     y0 = 0.0 if bottom else panjang_m
-    step = lw if x_left else -lw              # arah geser antar-lintasan
+    step = spacing if x_left else -spacing    # arah geser antar-lintasan
 
     # ---- bangun waypoints (titik belok) ----
     pts = [(x0, y0)]
@@ -736,7 +806,8 @@ def plan_coverage(panjang_m: float, lebar_m: float,
         cur = (cur[0], other_y)
         pts.append(cur)
         if k < n_lanes - 1:
-            nx = min(max(cur[0] + step, 0.0), lebar_m)     # geser + jaga dlm tambak
+            # geser satu spasi, jaga tetap di dalam tambak
+            nx = min(max(cur[0] + step, 0.0), lebar_m)
             cur = (nx, cur[1])
             pts.append(cur)
 
@@ -768,7 +839,8 @@ def plan_coverage(panjang_m: float, lebar_m: float,
     # dikirim (FW/CW/CCW), bukan dari timeline internal firmware.
     est_s = queue_duration_s(_steps_to_commands(steps), spd)
     return CoveragePlan(panjang_m, lebar_m, lw, spd, start_corner, first_turn,
-                        n_lanes, steps, pts, total, round(est_s, 1))
+                        n_lanes, steps, pts, total, round(est_s, 1),
+                        lane_spacing_m=spacing)
 
 
 def _steps_to_commands(steps: list) -> list[RobotCommand]:
@@ -1013,7 +1085,10 @@ class CommandRunner:
 
             fin = self.link.take_fin()
             while fin is not None:
-                if fin[0] == cmd.move:
+                # Hanya FIN yang tiba SESUDAH perintah ini dikirim yang sah.
+                # Robot mengulang FIN agar tidak hilang, jadi kiriman ulang
+                # milik perintah sebelumnya bisa saja masih menyusul.
+                if fin[0] == cmd.move and fin[2] >= t_send:
                     self._log("SELESAI", f"FIN {fin[0]}:{fin[1]} — {cmd.human()} tuntas")
                     return True
                 fin = self.link.take_fin()
@@ -1221,10 +1296,15 @@ class MPUSample:
     yaw: float = 0.0
     ts: float = 0.0          # time.monotonic() saat diterima
     source: str = "NRF"      # "NRF" (radio nyata) | "SIMULASI" (robot virtual)
+    valid: bool = True       # False bila sudut tidak bisa dipercaya
+    problem: str = ""        # penjelasan masalah MPU dari firmware; "" = sehat
 
     def human(self) -> str:
-        return (f"Roll={self.roll:.1f} Pitch={self.pitch:.1f} "
-                f"Yaw={self.yaw:.1f}")
+        s = (f"Roll={self.roll:.1f} Pitch={self.pitch:.1f} "
+             f"Yaw={self.yaw:.1f}")
+        if self.problem:
+            s += f"  << {self.problem}"
+        return s
 
     @property
     def age_s(self) -> float:
@@ -1286,7 +1366,9 @@ class MPUMonitor:
 
         (roll, pitch, yaw), ts = stamped
         sample = MPUSample(roll=roll, pitch=pitch, yaw=yaw, ts=ts,
-                           source="SIMULASI" if self.link.simulation else "NRF")
+                           source="SIMULASI" if self.link.simulation else "NRF",
+                           valid=self.link.telemetry_is_valid(),
+                           problem=self.link.telemetry_problem())
         self.latest = sample
 
         baru = ts != self._last_ts
@@ -1376,19 +1458,66 @@ if __name__ == "__main__":
     assert any(e.category == "SELESAI" for e in log.events), "sinyal FIN tak tercatat"
     print("  [OK] siklus kirim -> ON -> FIN berjalan untuk seluruh antrean")
 
+    # ---- FIN basi tidak boleh menyelesaikan perintah berikutnya ----
+    # Robot mengulang FIN supaya paketnya tidak hilang. Kiriman ulang milik
+    # perintah SEBELUMNYA bisa menyusul setelah perintah berikutnya dikirim;
+    # kalau jenis geraknya sama (mis. FW:200 lalu FW:200), tanpa cap waktu
+    # perintah kedua akan langsung dianggap tuntas padahal robot belum jalan.
+    print("\n== FIN basi (kiriman ulang) tidak menipu perintah berikutnya ==")
+    lk = RadioLink()
+    lk.begin(force_sim=True)
+    lk.clear_rx_state()
+    lk._route_packet(b"FIN FW:200\x00")          # FIN lama, sebelum perintah baru
+    t_perintah_baru = time.monotonic()
+    stale = lk.take_fin()
+    assert stale is not None and stale[0] == "FW"
+    assert stale[2] < t_perintah_baru, "cap waktu FIN tidak terekam"
+    time.sleep(0.01)
+    lk._route_packet(b"FIN FW:200\x00")          # FIN sungguhan, sesudahnya
+    fresh = lk.take_fin()
+    assert fresh is not None and fresh[2] >= t_perintah_baru
+    print(f"  FIN basi  ts={stale[2] - t_perintah_baru:+.3f}s -> DITOLAK")
+    print(f"  FIN segar ts={fresh[2] - t_perintah_baru:+.3f}s -> diterima")
+    print("  [OK] hanya FIN yang tiba sesudah perintah dikirim yang dihitung")
+
     # cek pola belok berselang-seling (R,R,L,L,R,R,...) untuk boustrophedon benar
     turns = [s.direction for s in plan.steps if s.kind == "turn"]
-    assert turns == ["R", "R", "L", "L", "R", "R"], f"pola belok salah: {turns}"
+    assert turns == ["R", "R", "L", "L", "R", "R", "L", "L"], f"pola belok salah: {turns}"
     fwd = [round(s.meters, 3) for s in plan.steps if s.kind == "forward"]
-    assert fwd == [10, 1, 10, 1, 10, 1, 10], f"jarak segmen salah: {fwd}"
-    # titik awal harus di sudut kiri-bawah (0,0)
-    assert plan.waypoints[0] == (0.0, 0.0)
+    assert fwd == [10, 1, 10, 1, 10, 1, 10, 1, 10], f"jarak segmen salah: {fwd}"
+    # Jalur menempel di kedua tepi, jadi titik awal Kiri-Bawah tepat di (0, 0)
+    # dan jumlah jalur = ceil(lebar/lintasan) + 1.
+    assert plan.lane_spacing_m == 1.0, plan.lane_spacing_m
+    assert plan.n_lanes == 5, plan.n_lanes
+    assert plan.waypoints[0] == (0.0, 0.0), plan.waypoints[0]
     # arah belok pertama tiap sudut
     assert plan_coverage(10, 4, start_corner="BR").first_turn == "L"
     assert plan_coverage(10, 4, start_corner="TR").first_turn == "R"
     # speed lebih cepat -> waktu lebih singkat
     assert plan_coverage(10, 4, speed_mps=1.0).est_time_s < plan.est_time_s
     print("  [OK] pola belok berselang-seling & encoding valid")
+
+    # ---- Jalur wajib MENEMPEL di kedua tepi tambak ----
+    # Bug lama: jalur pertama menempel tepi lalu digeser sejauh lane_width,
+    # sehingga sisi seberang tidak pernah dijadikan jalur (tambak 2x2 m hanya
+    # tersapu separuh). Sekarang jalur ada di SETIAP pembatas pita, termasuk
+    # x=0 dan x=lebar.
+    print("\n== Jalur menempel di kedua tepi tambak ==")
+    for P, L, lw, corner in [(2, 2, 1, "BR"), (10, 4, 1, "BL"),
+                             (5, 3, 1, "BL"), (4, 2, 2, "BR"), (6, 1, 1, "BL")]:
+        pl = plan_coverage(P, L, lw, 0.5, corner)
+        sumbu = sorted({round(x, 6) for x, _ in pl.waypoints})
+        spasi = pl.lane_spacing_m
+        assert len(sumbu) == pl.n_lanes, (sumbu, pl.n_lanes)
+        assert spasi <= lw + 1e-9, "spasi jalur melebihi lebar lintasan"
+        assert abs(sumbu[0]) < 1e-9, "jalur pertama tidak menempel tepi kiri"
+        assert abs(sumbu[-1] - L) < 1e-9, "jalur terakhir tidak menempel tepi kanan"
+        # tiap jalur berjarak tepat satu spasi dari tetangganya
+        for a, b in zip(sumbu, sumbu[1:]):
+            assert abs((b - a) - spasi) < 1e-9, (sumbu, spasi)
+        print(f"  {P:g}x{L:g} m, lintasan {lw:g} m -> {pl.n_lanes} jalur, "
+              f"spasi {spasi:g} m, x={sumbu} (0 s/d {L:g} m)")
+    print("  [OK] jalur pertama & terakhir tepat di tepi, spasi <= lebar lintasan")
 
     # Estimasi PWM/RPM per jenis perintah (dasar gauge di GUI)
     print("\nEstimasi throttle per perintah:")
