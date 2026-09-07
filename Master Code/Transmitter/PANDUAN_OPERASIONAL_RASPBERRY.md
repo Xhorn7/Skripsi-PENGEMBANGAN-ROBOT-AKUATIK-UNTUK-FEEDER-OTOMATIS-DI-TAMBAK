@@ -1,15 +1,29 @@
-# Panduan Operasional Pengendali Utama (Raspberry Pi 4)
+# Panduan Menyalakan Pengendali Utama (Raspberry Pi 4)
 
-Panduan ini untuk **menyalakan dan menjalankan** Pengendali Utama robot feeder,
-langkah demi langkah, dengan bahasa sehari-hari. Tidak perlu pengalaman Linux.
+**Untuk operator. Tidak perlu tahu apa-apa soal Linux atau pemrograman.**
 
-> **Bedanya dengan `README_RASPBERRY.md`:**
-> Berkas itu untuk **memasang** program pertama kali (sekali seumur hidup Pi).
-> Berkas **ini** untuk **memakai** alatnya sehari-hari — urutan colok kabel,
-> menyalakan, dan membuka GUI.
->
-> Kalau Pi Anda **belum pernah** dipasangi program ini, kerjakan dulu
-> [Bagian 6 — Pemasangan Pertama Kali](#6-pemasangan-pertama-kali-sekali-saja).
+Raspberry Pi ini **sudah dipasangi semua programnya**. Anda hanya perlu
+mencolok kabel, menyalakan, dan mengetik 4 baris perintah.
+
+---
+
+## RINGKASAN — 6 langkah
+
+Kalau sudah pernah, ini saja yang perlu diingat:
+
+1. Colok **HDMI** ke LCD, ujung kecilnya ke lubang Pi yang **dekat colokan listrik**
+2. Colok **Type-C** ke terminal listrik → Pi menyala sendiri
+3. Tunggu desktop muncul, cek **WiFi `SmartRoomPrototype`** sudah tersambung
+4. Tekan `Ctrl` + `Alt` + `T` → Terminal terbuka
+5. Ketik:
+   ```
+   cd Desktop/Skripsi_Tambak
+   sudo bash setup.sh
+   sudo bash run.sh
+   ```
+6. GUI terbuka. Selesai.
+
+Penjelasan lengkap tiap langkah ada di bawah.
 
 ---
 
@@ -17,156 +31,192 @@ langkah demi langkah, dengan bahasa sehari-hari. Tidak perlu pengalaman Linux.
 
 | Barang | Keterangan |
 | --- | --- |
-| Raspberry Pi 4 | Sudah terpasang kartu microSD berisi Raspberry Pi OS |
-| Adaptor USB Type-C | 5V 3A. Pakai adaptor resmi kalau ada |
-| Layar LCD kecil | Layar sentuh 7 inci (800 × 480) |
+| Raspberry Pi 4 | Sudah berisi semua program — tidak perlu instal apa pun |
+| Adaptor USB Type-C | 5V 3A |
+| Layar LCD kecil | Layar sentuh 7 inci |
 | Kabel HDMI → micro-HDMI | Ujung besar ke LCD, ujung kecil ke Pi |
-| Terminal listrik | Colokan/stop kontak untuk adaptor |
-| Modul NRF24L01 | Sudah terpasang di pin Pi (lihat `README_RASPBERRY.md`) |
+| Terminal listrik | Colokan untuk adaptor |
 
-Keyboard dan mouse **tidak wajib** — GUI-nya dirancang untuk layar sentuh.
-Tapi untuk pertama kali, keyboard sangat membantu.
+Keyboard dibutuhkan untuk mengetik 3 baris perintah di Langkah 4.
+Setelah GUI terbuka, semuanya bisa dioperasikan lewat sentuhan layar.
 
 ---
 
-## 2. Urutan mencolok kabel
+## 2. Mencolok kabel
 
-> **Urutannya penting.** Raspberry Pi memeriksa layar **hanya sekali, saat
-> menyala**. Kalau HDMI baru dicolok setelah Pi hidup, layarnya akan tetap
-> gelap walaupun semuanya normal — dan itu sering dikira Pi-nya rusak.
+> **Urutannya penting.** Raspberry Pi memeriksa layar **hanya sekali, tepat saat
+> menyala**. Kalau HDMI baru dicolok setelah Pi hidup, layarnya tetap gelap
+> walaupun Pi-nya normal — dan itu paling sering dikira Pi-nya rusak.
 >
-> Jadi: **colok layar dulu, listrik paling akhir.**
+> **Colok layar dulu, listrik paling akhir.**
 
-### Langkah 2.1 — Pasang kabel HDMI ke layar LCD
+### 2.1 Kabel HDMI ke layar LCD
 
-Ambil kabel HDMI. **Ujung yang besar** dicolokkan ke port HDMI di belakang
-layar LCD 7 inci.
+**Ujung yang besar** dicolok ke port HDMI di belakang LCD.
 
-### Langkah 2.2 — Pasang ujung micro-HDMI ke Raspberry Pi
+### 2.2 Ujung micro-HDMI ke Raspberry Pi
 
-**Ujung yang kecil (micro-HDMI)** dicolokkan ke Raspberry Pi 4.
+**Ujung yang kecil** dicolok ke Raspberry Pi.
 
-> **PERHATIAN — Pi 4 punya DUA lubang micro-HDMI yang bentuknya sama persis.**
-> Pakai yang **paling dekat dengan lubang listrik Type-C**. Lubang itu namanya
-> **HDMI0**.
+> **PERHATIAN — Pi 4 punya DUA lubang micro-HDMI, bentuknya sama persis.**
+> Pakai yang **paling dekat dengan lubang listrik Type-C**.
 >
-> Kalau salah colok ke lubang yang satunya (HDMI1), Pi tetap menyala normal
-> tetapi **layar tidak menampilkan apa-apa**. Ini penyebab "layar hitam" yang
-> paling sering terjadi pada Pi 4.
+> Salah lubang = Pi tetap menyala tapi **layar tidak menampilkan apa-apa**.
+> Ini penyebab "layar hitam" nomor satu di Pi 4.
 
 ```
         Tampak samping Raspberry Pi 4
 
-   [ Type-C ] [ HDMI0 ] [ HDMI1 ] [ Audio ]
+   [ Type-C ] [ HDMI ] [ HDMI ] [ Audio ]
     listrik      ^
                  |
         PAKAI YANG INI — paling dekat colokan listrik
 ```
 
-### Langkah 2.3 — Nyalakan layar LCD
+### 2.3 Nyalakan LCD
 
-Kalau LCD punya adaptor sendiri, colokkan ke terminal listrik sekarang.
-Sebagian LCD 7 inci mengambil listrik dari USB Pi — kalau begitu, colokkan
-kabel USB-nya ke port USB Pi.
+Kalau LCD punya adaptor sendiri, colok sekarang. Kalau LCD-nya mengambil
+listrik dari USB, colok kabel USB-nya ke port USB Pi.
 
-### Langkah 2.4 — Baru colokkan listrik Raspberry Pi
+### 2.4 Terakhir, colok listrik Pi
 
-Colokkan **adaptor USB Type-C** ke terminal listrik, lalu **ujung Type-C-nya
-ke Raspberry Pi**.
+Colok **adaptor Type-C** ke terminal listrik, lalu ujungnya ke Raspberry Pi.
 
-Raspberry Pi **tidak punya tombol power**. Begitu listrik masuk, ia langsung
-menyala sendiri.
+Pi **tidak punya tombol power** — begitu listrik masuk, ia langsung menyala.
 
 **Yang harus terlihat:**
-- Lampu **merah** di Pi menyala terus → listrik masuk
-- Lampu **hijau** berkedip-kedip → kartu microSD sedang dibaca (ini normal dan bagus)
-- Layar menampilkan logo Raspberry lalu masuk ke desktop, sekitar 30–60 detik
+- Lampu **merah** menyala terus → listrik masuk
+- Lampu **hijau** berkedip-kedip → normal, kartu memori sedang dibaca
+- Desktop muncul dalam 30–60 detik
 
 ---
 
-## 3. Membuka Terminal
+## 3. Cek WiFi
 
-Setelah desktop muncul, buka **Terminal** — jendela hitam tempat mengetik perintah.
+Lihat **pojok kanan atas layar**. Harus ada ikon WiFi (bentuk kipas/gelombang).
 
-**Cara 1 (paling cepat):** tekan bersamaan `Ctrl` + `Alt` + `T`
+Pi ini seharusnya **tersambung otomatis** ke WiFi **`SmartRoomPrototype`**.
 
-**Cara 2 (pakai sentuhan):** sentuh ikon Terminal di bilah atas layar — bentuknya
-kotak hitam dengan tanda `>_`
+**Kalau ikonnya tampak terputus** (ada tanda silang, atau bentuknya panah
+atas-bawah):
 
-Akan muncul tulisan seperti ini:
+1. Sentuh/klik ikon WiFi itu
+2. Pilih **`SmartRoomPrototype`** dari daftar
+3. Tunggu sampai ikonnya berubah jadi gelombang penuh
+
+Kalau diminta kata sandi, tanyakan ke pemilik jaringan.
+
+---
+
+## 4. Buka Terminal
+
+Tekan bersamaan: **`Ctrl` + `Alt` + `T`**
+
+Akan muncul jendela hitam dengan tulisan seperti:
 
 ```
 pi@raspberrypi:~ $
 ```
 
-Tanda `$` di ujung artinya Terminal siap menerima perintah.
+Tanda `$` di ujung artinya siap menerima perintah.
+
+> Bisa juga lewat ikon Terminal di bilah atas layar — kotak hitam bertanda `>_`.
 
 ---
 
-## 4. Menjalankan GUI
+## 5. Menjalankan program
 
-Ketik dua perintah berikut. **Tekan `Enter` setelah setiap baris.**
+Ketik **tiga baris** berikut. **Tekan `Enter` setelah setiap baris**, dan tunggu
+sampai selesai sebelum mengetik baris berikutnya.
+
+### Baris 1 — masuk ke folder program
 
 ```bash
-cd ~/feeder
+cd Desktop/Skripsi_Tambak
 ```
+
+> **Huruf besar-kecil BERPENGARUH di Raspberry Pi.** `Desktop` harus pakai
+> **D besar**, dan `Skripsi_Tambak` pakai **S** dan **T** besar serta garis
+> bawah `_` di tengahnya. Kalau salah satu huruf keliru, akan muncul
+> `No such file or directory`.
+>
+> **Cara aman:** ketik `cd Desk` lalu tekan tombol **`Tab`** — Terminal akan
+> melengkapi sendiri jadi `cd Desktop/`. Ketik `Skri` lalu **`Tab`** lagi.
+> Cara ini menghilangkan risiko salah ketik sepenuhnya.
+
+### Baris 2 — siapkan program
 
 ```bash
-./run.sh
+sudo bash setup.sh
 ```
 
-Penjelasan singkat supaya tidak sekadar menghafal:
+Akan muncul banyak tulisan berjalan. **Itu normal.** Tunggu sampai berhenti dan
+tanda `$` muncul lagi.
 
-- `cd ~/feeder` artinya "masuk ke folder bernama `feeder`". Di situlah programnya
-  disimpan. Tanda `~` berarti folder milik Anda sendiri.
-- `./run.sh` artinya "jalankan berkas `run.sh` yang ada di folder ini". Berkas itu
-  yang membuka GUI-nya.
+Kalau diminta kata sandi, ketik kata sandi Raspberry Pi lalu `Enter`.
+**Kata sandi tidak akan terlihat saat diketik** — tidak ada bintang, tidak ada
+titik, layarnya diam saja. Itu memang perilaku normal Linux, bukan keyboard
+yang rusak. Ketik saja sampai selesai lalu tekan `Enter`.
 
-**Yang harus terjadi:** layar berubah menjadi tampilan GUI Feeder layar penuh,
+### Baris 3 — buka GUI
+
+```bash
+sudo bash run.sh
+```
+
+**Yang harus terjadi:** layar berubah jadi tampilan GUI Feeder layar penuh,
 dengan dua tombol besar: **MISI** dan **SETTING**.
 
-Kalau sudah muncul, Pengendali Utama siap dipakai.
+Kalau sudah muncul, alatnya siap dipakai.
+
+> **Jangan tutup jendela Terminal-nya** selama GUI berjalan. Terminal itu yang
+> menjalankan programnya — kalau ditutup, GUI ikut mati.
 
 ---
 
-## 5. Hal penting saat memakai
+## 6. Memakai GUI
 
-### Program selalu mulai dalam MODE SIMULASI
+### Program selalu mulai di MODE SIMULASI
 
-Ini disengaja demi keamanan. Di mode simulasi, semua perintah dijalankan oleh
-**robot virtual** — robot sungguhan **tidak akan bergerak**. Aman untuk berlatih
-dan demo.
+Ini disengaja demi keamanan. Di mode simulasi, semua perintah dijalankan
+**robot virtual** — robot sungguhan **tidak akan bergerak**. Aman untuk
+berlatih dan demo.
 
-Untuk benar-benar menggerakkan robot, sentuh tombol **MODE** di bilah atas, lalu
-pilih **REAL**.
+Untuk benar-benar menggerakkan robot: sentuh tombol **MODE** di bilah atas,
+lalu pilih **REAL**.
 
-> Perpindahan mode **ditolak** selagi ada perintah yang sedang berjalan. Tekan
-> **STOP** dulu, baru ganti mode.
+> Ganti mode **ditolak** selagi ada perintah berjalan. Tekan **STOP** dulu.
 
 ### Alur pemakaian
 
 **BERANDA → MISI → DASHBOARD**
 
 1. Sentuh **MISI**
-2. Isi panjang dan lebar tambak (papan angka akan terbuka saat kolomnya disentuh)
-3. Sentuh **KIRIM MISI KE ROBOT** — layar otomatis pindah ke DASHBOARD
-4. Pantau dari DASHBOARD: status robot, perintah yang sedang jalan, sudut MPU
-   (Roll/Pitch/Yaw), dan tombol **STOP** merah besar
+2. Isi **panjang** dan **lebar** tambak — papan angka terbuka saat kolomnya disentuh
+3. Sentuh **KIRIM MISI KE ROBOT** — layar pindah sendiri ke DASHBOARD
+4. Pantau dari DASHBOARD: status robot, perintah yang sedang jalan, sudut
+   Roll/Pitch/Yaw, dan tombol **STOP** merah besar
 
 Tombol **STOP** merah aktif dari halaman mana pun. Itu tombol berhenti darurat.
 
-### Menutup program
+---
 
-- Tekan `Escape` atau `F11` → keluar dari layar penuh menjadi jendela biasa
+## 7. Menutup dan mematikan
+
+### Menutup GUI
+
+- Tekan **`Escape`** atau **`F11`** → keluar dari layar penuh
 - Atau lewat **SETTING → SISTEM → tombol keluar**
+- Atau di jendela Terminal, tekan **`Ctrl` + `C`**
 
 ### Mematikan Raspberry Pi
 
-**Jangan langsung cabut listrik.** Kartu microSD bisa rusak kalau dicabut
-paksa saat sedang menulis data.
+> **JANGAN langsung cabut listrik.** Kartu memori bisa rusak kalau dicabut
+> paksa saat sedang menulis data, dan Pi-nya jadi tidak bisa dipakai lagi.
 
-Cara benar: menu Raspberry (pojok kiri atas) → **Shutdown**. Tunggu sampai lampu
-hijau berhenti berkedip, **baru** cabut listriknya.
+Cara benar: menu **Raspberry** (pojok kiri atas) → **Shutdown**.
+
+Tunggu sampai **lampu hijau berhenti berkedip**, **baru** cabut listriknya.
 
 Lewat Terminal juga bisa:
 
@@ -176,94 +226,43 @@ sudo shutdown -h now
 
 ---
 
-## 6. Pemasangan pertama kali (sekali saja)
+## 8. Kalau ada masalah
 
-Lewati bagian ini kalau Pi Anda sudah pernah dipasangi program ini.
-
-### 6.1 Salin program ke Raspberry Pi
-
-Pindahkan berkas `raspberry_feeder.zip` ke Pi (lewat flashdisk atau unduh dari
-GitHub), lalu di Terminal:
-
-```bash
-cd ~
-unzip raspberry_feeder.zip
-mv raspberry_feeder feeder
-cd ~/feeder
-```
-
-Sekarang program ada di folder `~/feeder`.
-
-### 6.2 Jalankan skrip pemasangan
-
-```bash
-chmod +x setup_pi.sh run.sh
-```
-
-```bash
-./setup_pi.sh
-```
-
-Perintah pertama memberi izin agar kedua berkas itu boleh dijalankan. Perintah
-kedua memasang semua yang dibutuhkan: mengaktifkan SPI (untuk radio NRF24),
-memasang paket Python, dan membuat lingkungan kerjanya.
-
-Proses ini makan waktu beberapa menit dan butuh **koneksi internet**.
-
-### 6.3 Logout lalu login lagi
-
-**Langkah ini wajib, jangan dilewat.** Skrip tadi menambahkan akun Anda ke grup
-`spi`, `gpio`, dan `dialout` supaya program boleh memakai radio NRF24. Perubahan
-grup baru berlaku setelah login ulang.
-
-Menu Raspberry → **Logout**, lalu masuk kembali.
-
-Setelah itu, pemakaian sehari-hari cukup mengikuti Bagian 2 sampai 4.
-
----
-
-## 7. Kalau ada masalah
-
-| Yang terjadi | Kemungkinan sebab | Yang dilakukan |
+| Yang terjadi | Sebabnya | Yang dilakukan |
 | --- | --- | --- |
-| Layar gelap, lampu merah Pi menyala | micro-HDMI salah lubang | Pindah ke **HDMI0** — yang dekat colokan Type-C |
-| Layar gelap, sudah di HDMI0 | HDMI dicolok setelah Pi menyala | Matikan Pi, colok HDMI, baru nyalakan |
-| Lampu hijau tidak pernah berkedip | microSD tidak terbaca | Cabut-pasang ulang kartu microSD |
-| Muncul gambar petir ⚡ di layar | Listrik kurang kuat | Ganti adaptor dengan yang 5V 3A |
-| `cd ~/feeder` → `No such file or directory` | Folder belum ada | Kerjakan Bagian 6 dulu |
-| `./run.sh` → `Permission denied` | Berkas belum boleh dijalankan | Ketik `chmod +x run.sh` lalu ulangi |
-| `./run.sh` → `command not found` | Salah folder | Ketik `cd ~/feeder` dulu |
+| Layar gelap, lampu merah Pi menyala | micro-HDMI salah lubang | Pindah ke lubang yang **dekat colokan Type-C** |
+| Layar gelap, lubang sudah benar | HDMI dicolok setelah Pi menyala | Matikan Pi, colok HDMI, baru nyalakan |
+| Lampu hijau tidak pernah berkedip | Kartu memori tidak terbaca | Cabut-pasang ulang kartu microSD |
+| Muncul gambar petir ⚡ | Listrik kurang kuat | Ganti adaptor dengan 5V 3A |
+| `No such file or directory` | Salah ketik huruf besar/kecil | Pakai tombol **`Tab`** untuk melengkapi otomatis |
+| Kata sandi tidak muncul saat diketik | Normal di Linux | Ketik terus lalu `Enter` |
 | GUI muncul tapi robot diam | Masih mode SIMULASI | Sentuh **MODE** → pilih **REAL** |
-| Mode REAL tapi robot tetap diam | Radio NRF tidak tersambung | Cek wiring NRF di `README_RASPBERRY.md`, pastikan VCC **3.3V** |
+| Mode REAL tapi robot tetap diam | Radio NRF tidak tersambung | Cek modul NRF di Pi dan di robot |
+| Ikon WiFi terputus | Belum tersambung | Klik ikon WiFi → pilih `SmartRoomPrototype` |
+| GUI tiba-tiba tertutup | Terminal ikut tertutup | Buka Terminal lagi, ulangi Langkah 5 |
 
-### Perintah cadangan kalau `run.sh` bermasalah
+### Kalau macet dan ingin mengulang dari awal
 
-Kalau `./run.sh` tetap gagal, GUI bisa dibuka manual:
-
-```bash
-cd ~/feeder
-source ~/feeder-venv/bin/activate
-python3 receiverArduino.py
-```
-
-### Pilihan lain saat menjalankan
+Tutup Terminal, buka Terminal baru (`Ctrl` + `Alt` + `T`), lalu ulangi:
 
 ```bash
-./run.sh --windowed    # tampil sebagai jendela, tidak layar penuh
-./run.sh --real        # langsung mode REAL, tanpa lewat tombol MODE
-./run.sh --cli         # mode teks, tanpa GUI
+cd Desktop/Skripsi_Tambak
+sudo bash setup.sh
+sudo bash run.sh
 ```
+
+Mengulang tidak merusak apa pun — aman dilakukan berkali-kali.
 
 ---
 
-## 8. Ringkasan sekali lihat
+## Catatan untuk pengembang
 
-Untuk pemakaian sehari-hari, hanya ini yang perlu diingat:
+Panduan ini mengikuti susunan **Raspberry Pi yang sedang dipakai**: program ada
+di `~/Desktop/Skripsi_Tambak`, dijalankan lewat `sudo bash setup.sh` lalu
+`sudo bash run.sh`.
 
-1. Colok **HDMI** ke LCD, ujung kecilnya ke **HDMI0** Pi (dekat colokan listrik)
-2. Nyalakan **LCD**
-3. Colok **Type-C** ke terminal listrik, lalu ke Pi — Pi menyala sendiri
-4. Tunggu desktop muncul, tekan `Ctrl` + `Alt` + `T`
-5. Ketik `cd ~/feeder` lalu `./run.sh`
-6. Sentuh **MODE** → **REAL** kalau mau menggerakkan robot sungguhan
-7. Selesai: **Shutdown** dari menu, baru cabut listrik
+Berkas [`README_RASPBERRY.md`](README_RASPBERRY.md) menjelaskan pemasangan dari
+nol memakai `raspberry_feeder.zip` (`~/feeder`, `setup_pi.sh`, `./run.sh`).
+Susunan itu **berbeda** dengan Pi yang dipakai sekarang — pakai berkas ini
+untuk pengoperasian sehari-hari, dan berkas itu bila suatu saat memasang dari
+awal di Pi yang masih kosong.
