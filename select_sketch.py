@@ -5,6 +5,7 @@
 #   -e esctest  -> Test Part/EscTest               (tes ESC/motor murni)
 #   -e mputest  -> Test Part/MPU Test/mpu          (kalibrasi & cek bus MPU)
 #   -e mpudiag  -> Test Part/MpuDiag               (diagnosa I2C tanpa pustaka)
+#   -e nrfdiag  -> Test Part/NrfDiag               (diagnosa SPI tanpa pustaka RF24)
 #   -e nanotest -> Test Part/MPU Test/mpu          (sketch MPU yg sama, di Nano)
 Import("env")
 import os
@@ -15,6 +16,7 @@ SKETCH_DIR_OF_ENV = {
     "esctest":  ("Test Part", "EscTest"),
     "mputest":  ("Test Part", "MPU Test", "mpu"),
     "mpudiag":  ("Test Part", "MpuDiag"),
+    "nrfdiag":  ("Test Part", "NrfDiag"),
     "nanotest": ("Test Part", "MPU Test", "mpu"),
 }
 

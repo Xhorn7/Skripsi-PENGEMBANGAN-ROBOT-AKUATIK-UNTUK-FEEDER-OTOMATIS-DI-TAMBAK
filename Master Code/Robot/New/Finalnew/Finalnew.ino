@@ -47,6 +47,36 @@ const byte telemetryAddress[6] = "00002"; // Robot -> Pi (ON/FIN + telemetri MPU
 char text[64];
 
 // ================= MPU =================
+//
+// MODUL TERPASANG: papan bersablon "MPU-9250/6500" — satu desain papan untuk
+// DUA chip berbeda. WHO_AM_I papan ini terbaca 0x70, yang berarti chip yang
+// terpasang adalah MPU-6500: accel + gyro saja, TANPA magnetometer. (MPU-9250
+// asli menjawab 0x71.) Jadi yaw HANYA berasal dari integrasi gyro dan pasti
+// merayap — terukur 1,1 derajat/menit pada pengujian diam 10 menit.
+//
+// Konsekuensi untuk navigasi: yaw TIDAK boleh dipakai sebagai arah mutlak
+// lintas segmen. Firmware ini memang sudah memakainya secara relatif
+// (targetYaw & startYaw diambil ulang tiap gerakan), jadi drift di dalam satu
+// segmen tidak berarti (30 detik = 0,55 derajat). Yang tetap menumpuk adalah
+// arah fisik robot sepanjang misi: kira-kira 1,1 derajat per menit waktu
+// bergerak, atau ~11 derajat untuk misi 10 menit.
+//
+// WIRING MPU (modul polos 10 pin: VCC GND SCL SDA EDA ECL ADO INT NCS FSYNC)
+//   VCC   -> 3V3          SCL -> GPIO22
+//   GND   -> GND          SDA -> GPIO21
+//   ADO   -> GND          kunci alamat di 0x68; mengambang bisa jadi 0x69
+//   NCS   -> 3V3          kunci mode I2C
+//   FSYNC -> GND          jangan mengambang
+//   EDA/ECL/INT           dibiarkan KOSONG
+//
+// ADO, NCS, dan FSYNC TIDAK ADA di MPU-6050 dan wajib disambung di sini.
+// NCS yang paling menjebak: MPU-6500/9250 MENGUNCI mode antarmuka saat listrik
+// masuk, jadi bila NCS terbaca LOW pada saat itu, chip masuk mode SPI dan
+// I2C-nya MATI TOTAL di semua alamat — modul sehat pun tampak seperti tidak ada.
+//
+// STATUS PERAKITAN saat ini: ketiga pin itu masih JUMPER LANGSUNG ke ESP32,
+// belum lewat jalur PCB. Berfungsi normal, tapi kabel loncat lebih rentan
+// lepas kena getaran motor. Bila PCB direvisi, jadikan ketiganya jalur tetap.
 
 #define SDA_PIN 21
 #define SCL_PIN 22
@@ -160,6 +190,70 @@ bool i2cAck(uint8_t addr)
 
 bool mpuProbe() { return i2cAck(MPU6050_ADDR); }
 
+// Baca n byte dari sebuah register. Mengembalikan false bila bus tidak
+// menjawab — inilah yang membedakan "sensor bilang 0" dari "tidak ada sensor".
+// Pustaka tockn tidak bisa membedakannya: ia membaca -1 lalu memakainya
+// seolah-olah angka sungguhan.
+bool i2cReadBytes(uint8_t addr, uint8_t reg, uint8_t *buf, uint8_t n)
+{
+  Wire.beginTransmission(addr);
+  Wire.write(reg);
+  if (Wire.endTransmission(false) != 0) return false;
+  if (Wire.requestFrom((int)addr, (int)n) != n) return false;
+  for (uint8_t i = 0; i < n; i++) buf[i] = Wire.read();
+  return true;
+}
+
+// Melepaskan bus yang DIKUNCI slave. Kalau ESP32 di-reset di TENGAH transaksi
+// I2C — saat upload, saat EN ditekan, atau saat brown-out — MPU TIDAK ikut
+// ter-reset karena listriknya tidak putus. Ia masih menunggu sisa pulsa clock
+// dan menahan SDA tetap LOW, sehingga SEMUA transaksi berikutnya menggantung.
+//
+// Wire.end() + Wire.begin() saja TIDAK cukup: itu hanya melepas sisi ESP32,
+// sementara yang menahan jalur adalah MPU di seberangnya. Urutan baku
+// pemulihan bus I2C: kirim hingga 9 pulsa SCL manual supaya slave menuntaskan
+// byte yang tertunda lalu melepas SDA, ditutup kondisi STOP. Sembilan karena
+// satu byte = 8 bit + 1 ACK.
+void i2cBusRecover()
+{
+  Wire.end();
+
+  pinMode(SDA_PIN, INPUT_PULLUP);
+  pinMode(SCL_PIN, OUTPUT);
+  digitalWrite(SCL_PIN, HIGH);
+  delayMicroseconds(5);
+
+  for (uint8_t i = 0; i < 9 && digitalRead(SDA_PIN) == LOW; i++)
+  {
+    digitalWrite(SCL_PIN, LOW);  delayMicroseconds(5);
+    digitalWrite(SCL_PIN, HIGH); delayMicroseconds(5);
+  }
+
+  pinMode(SDA_PIN, OUTPUT);          // kondisi STOP: SDA naik selagi SCL HIGH
+  digitalWrite(SDA_PIN, LOW);   delayMicroseconds(5);
+  digitalWrite(SCL_PIN, HIGH);  delayMicroseconds(5);
+  digitalWrite(SDA_PIN, HIGH);  delayMicroseconds(5);
+
+  pinMode(SDA_PIN, INPUT);
+  pinMode(SCL_PIN, INPUT);
+
+  Wire.begin(SDA_PIN, SCL_PIN);
+  Wire.setClock(I2C_HZ);
+  Wire.setTimeOut(50);
+}
+
+// Probe yang diulang sebelum menyerah. MPU perlu waktu menuntaskan power-on
+// reset, dan probe pertama sesudah boot sering jatuh TEPAT sebelum chip siap.
+bool mpuProbeRetry(uint8_t tries, uint16_t gapMs)
+{
+  for (uint8_t i = 0; i < tries; i++)
+  {
+    if (mpuProbe()) return true;
+    delay(gapMs);
+  }
+  return false;
+}
+
 // Bus I2C yang SEHAT diam di HIGH, ditahan resistor pull-up pada modul MPU
 // (GY-521 punya 4k7 ke VCC). Kalau kedua jalur diam di LOW, berarti tidak ada
 // pull-up sama sekali -> modul tidak dapat 3.3V, GND-nya lepas, atau kabel/
@@ -219,6 +313,83 @@ uint8_t mpuWhoAmI()
   return Wire.read();
 }
 
+// =========================================
+// KALIBRASI GYRO YANG TIDAK BISA MENGGANTUNG
+// =========================================
+// Pengganti mpu.calcGyroOffsets(). Pustaka tockn menembak 3000 transaksi I2C
+// beruntun TANPA memeriksa satu pun kegagalan; sekali bus tersendat, ia
+// menggantung SELAMANYA. Di sketch tes hal itu cuma bikin serial diam, tapi di
+// SINI akibatnya jauh lebih serius: kalibrasi dipanggil dari setup(), jadi
+// loop() tidak pernah tercapai, radio tidak pernah dilayani, dan robot hanya
+// diam tanpa sebab yang terlihat. Kejadian ini bukan teori — terjadi berulang
+// saat pengujian MPU di PCB.
+//
+// Nilai balik:
+//   CAL_GAGAL  bus mati; TIDAK ada offset yang dipasang
+//   CAL_BERSIH offset dipasang, robot benar-benar diam saat diukur
+//   CAL_GOYANG offset dipasang, TAPI robot bergoyang -> offset patut diragukan
+
+#define CAL_GAGAL   0
+#define CAL_BERSIH  1
+#define CAL_GOYANG  2
+
+#define GYRO_CAL_SAMPLES   600
+#define GYRO_LSB_PER_DPS   65.5f    // tockn memasang GYRO_CONFIG = +-500 dps
+#define GYRO_STILL_MAX_DPS 3.0f     // rentang wajar saat benar-benar diam
+
+uint8_t calcGyroOffsetsSafe()
+{
+  float sum[3] = {0, 0, 0};
+  float mn[3]  = { 9999,  9999,  9999};
+  float mx[3]  = {-9999, -9999, -9999};
+  uint16_t ok = 0, fail = 0;
+
+  for (uint16_t i = 0; i < GYRO_CAL_SAMPLES; i++)
+  {
+    uint8_t b[6];
+    if (!i2cReadBytes(MPU6050_ADDR, 0x43, b, 6))   // 0x43 = GYRO_XOUT_H
+    {
+      if (++fail > 60) return CAL_GAGAL;
+      i2cBusRecover();
+      delay(5);
+      continue;
+    }
+
+    float v[3];
+    for (uint8_t a = 0; a < 3; a++)
+    {
+      int16_t raw = (int16_t)((uint16_t)b[a * 2] << 8 | b[a * 2 + 1]);
+      v[a] = raw / GYRO_LSB_PER_DPS;
+      sum[a] += v[a];
+      if (v[a] < mn[a]) mn[a] = v[a];
+      if (v[a] > mx[a]) mx[a] = v[a];
+    }
+    ok++;
+    delay(3);
+  }
+
+  if (ok < GYRO_CAL_SAMPLES / 2) return CAL_GAGAL;
+
+  mpu.setGyroOffsets(sum[0] / ok, sum[1] / ok, sum[2] / ok);
+
+  // Rentang simpangan = bukti robot benar-benar diam atau tidak. Ini yang
+  // memisahkan "sensornya jelek" dari "robot kesenggol/kena ombak saat
+  // dikalibrasi" — dua hal yang sama-sama tampil sebagai yaw yang merayap
+  // cepat. Saat pengujian, offset yang diambil sambil dipegang menghasilkan
+  // drift 150 deg/menit; yang diambil saat diam, 1,1 deg/menit.
+  float worst = 0;
+  for (uint8_t a = 0; a < 3; a++)
+    if (mx[a] - mn[a] > worst) worst = mx[a] - mn[a];
+
+  Serial.print("Offset gyro: X="); Serial.print(sum[0] / ok, 3);
+  Serial.print(" Y=");             Serial.print(sum[1] / ok, 3);
+  Serial.print(" Z=");             Serial.print(sum[2] / ok, 3);
+  Serial.print("  simpangan=");    Serial.print(worst, 2);
+  Serial.print(" deg/s  gagal=");  Serial.println(fail);
+
+  return (worst > GYRO_STILL_MAX_DPS) ? CAL_GOYANG : CAL_BERSIH;
+}
+
 // calibrate=false dipakai saat sambung ulang di TENGAH GERAKAN: kalibrasi
 // menuntut sensor benar-benar diam, jadi menjalankannya saat robot bergerak
 // justru menghasilkan offset yang salah.
@@ -228,11 +399,17 @@ bool initMPU(bool calibrate)
   mpu.begin();
   if (calibrate)
   {
-    // (true, 0, 0) — tampilkan progres, tapi BUANG jeda bawaan pustaka
-    // (delayBefore 1000 ms + delayAfter 3000 ms). Jeda itu murni kosmetik,
-    // sementara 4 detik diam membuat robot berhenti melayani radio.
-    mpu.calcGyroOffsets(true, 0, 0);
-    mpuCalibrated = true;
+    // Offset TETAP dipakai walau hasilnya CAL_GOYANG — offset yang diukur
+    // sambil bergoyang masih jauh lebih baik daripada nol. Yang berbeda hanya
+    // mpuCalibrated: dibiarkan salah supaya nanti diulang saat benar-benar
+    // tenang, dan supaya GUI tetap melihat kode status 3.
+    uint8_t r = calcGyroOffsetsSafe();
+    if (r == CAL_BERSIH) mpuCalibrated = true;
+    else if (r == CAL_GOYANG)
+      Serial.println("!! Robot BERGOYANG saat kalibrasi — offset dipakai "
+                     "sementara, akan diulang saat tenang");
+    else
+      Serial.println("!! Kalibrasi gyro GAGAL — bus I2C tidak menjawab");
   }
   mpu.update();
   return true;
@@ -301,8 +478,12 @@ void mpuUpdate()
   if (!mpuOk && retryDue)
   {
     lastMpuRetryMs = millis();
-    // checkBusIdle() sekalian memasang ulang bus (Wire.end() + Wire.begin()),
-    // jadi ia juga melepaskan bus dari kondisi nyangkut.
+
+    // i2cBusRecover() DULU, baru checkBusIdle(). Wire.end()+Wire.begin() di
+    // dalam checkBusIdle hanya memasang ulang sisi ESP32; kalau yang menahan
+    // jalur adalah MPU yang tertinggal di tengah transaksi, bus tetap mati
+    // sampai slave-nya diberi pulsa clock untuk menuntaskan byte-nya.
+    i2cBusRecover();
     checkBusIdle();
 
     // Cukup 2 detik sekali — murah, dan inilah yang membuat GUI bisa
@@ -327,16 +508,50 @@ void mpuUpdate()
 
 // Yaw yang merayap tetap walau robot diam = gyro belum terkalibrasi.
 // Dipanggil saat menganggur supaya tidak pernah menahan gerakan.
+// Jeda antar-percobaan. TANPA ini, robot yang mengapung di air bergelombang
+// akan gagal uji "diam" terus-menerus dan mencoba ulang tiap iterasi idle —
+// tiap percobaan menahan loop ~2 detik, jadi radio telat dilayani dan failsafe
+// heartbeat 3 detik bisa ikut terpicu. Justru kalibrasi yang niatnya menolong
+// malah membuat robot tampak putus sambungan.
+#define GYRO_CAL_RETRY_MS   15000UL
+#define GYRO_CAL_MAX_TRIES  5
+
+unsigned long lastGyroCalMs = 0;
+uint8_t       gyroCalTries  = 0;
+
 void maybeCalibrateWhenIdle()
 {
-  if (mpuOk && !mpuCalibrated && !moveInProgress)
+  if (!(mpuOk && !mpuCalibrated && !moveInProgress)) return;
+  if (gyroCalTries > 0 && millis() - lastGyroCalMs < GYRO_CAL_RETRY_MS) return;
+
+  lastGyroCalMs = millis();
+  gyroCalTries++;
+
+  Serial.println("Gyro belum terkalibrasi — robot harus DIAM sebentar...");
+  uint8_t r = calcGyroOffsetsSafe();
+  mpu.update();
+  lastSignalMs = millis();   // kalibrasi memakan ~2 s: jangan picu failsafe
+
+  if (r == CAL_BERSIH)
   {
-    Serial.println("Gyro belum terkalibrasi — robot harus DIAM sebentar...");
-    mpu.calcGyroOffsets(true, 0, 0);
     mpuCalibrated = true;
-    mpu.update();
-    lastSignalMs = millis();   // kalibrasi memakan ~2 s: jangan picu failsafe
     Serial.println("Kalibrasi gyro selesai — yaw seharusnya berhenti merayap");
+  }
+  else if (r == CAL_GOYANG && gyroCalTries >= GYRO_CAL_MAX_TRIES)
+  {
+    // Air yang tidak pernah tenang tidak boleh membuat robot mengulang
+    // kalibrasi selamanya. Offset dari gerakan berayun tetap berguna: riak
+    // naik-turun rata-ratanya nol, jadi biasnya masih terukur cukup baik.
+    mpuCalibrated = true;
+    Serial.println("Air tidak pernah tenang setelah beberapa percobaan — "
+                   "offset terakhir DIPAKAI, yaw mungkin merayap sedikit");
+  }
+  else
+  {
+    Serial.print("Kalibrasi ditunda (percobaan ");
+    Serial.print(gyroCalTries);
+    Serial.print("/"); Serial.print(GYRO_CAL_MAX_TRIES);
+    Serial.println(") — robot masih bergerak");
   }
 }
 
@@ -804,24 +1019,35 @@ void setup()
   mpuAlt69     = i2cAck(MPU6050_ADDR_ALT);
   mpuAckNoData = mpuProbe();
 
-  if (mpuProbe())
+  // mpuProbeRetry, bukan mpuProbe: probe tunggal sesudah boot sering jatuh
+  // TEPAT sebelum MPU selesai power-on reset, lalu firmware berjalan seumur
+  // hidup tanpa heading-hold padahal sensornya sehat.
+  if (mpuProbeRetry(10, 100))
   {
     uint8_t who = mpuWhoAmI();
-    Serial.print("MPU6050 di 0x68, WHO_AM_I = 0x");
-    Serial.println(who, HEX);
-    if (who != 0x68)
-      Serial.println("   (catatan: bukan 0x68 — modul klon, biasanya tetap jalan)");
+    Serial.print("MPU di 0x68, WHO_AM_I = 0x");
+    Serial.print(who, HEX);
+    // Nomor ini dibaca dari silikon, bukan dari sablon papan. Modul bersablon
+    // "MPU-9250/6500" adalah satu desain untuk DUA chip, dan yang terpasang di
+    // robot ini adalah 6500 — accel+gyro saja, tanpa magnetometer. Artinya yaw
+    // hanya berasal dari integrasi gyro dan akan merayap (terukur 1,1 deg/menit),
+    // jadi arah TIDAK boleh diandalkan sebagai acuan mutlak lintas segmen.
+    switch (who)
+    {
+      case 0x68: Serial.println("  -> MPU-6050"); break;
+      case 0x70: Serial.println("  -> MPU-6500 (tanpa magnetometer)"); break;
+      case 0x71: Serial.println("  -> MPU-9250 (punya magnetometer)"); break;
+      case 0x73: Serial.println("  -> MPU-9255 (punya magnetometer)"); break;
+      default:   Serial.println("  -> tidak dikenal (klon; biasanya tetap jalan)");
+    }
 
     Serial.println("Kalibrasi gyro — robot harus DIAM & DATAR, jangan disentuh");
     initMPU(true);              // kalibrasi offset gyro: robot harus DIAM & DATAR
     mpuUpdate();
-    Serial.print("Offset gyro  X="); Serial.print(mpu.getGyroXoffset());
-    Serial.print("  Y=");            Serial.print(mpu.getGyroYoffset());
-    Serial.print("  Z=");            Serial.println(mpu.getGyroZoffset());
   }
   else
   {
-    Serial.println("!! MPU6050 TIDAK menjawab di I2C 0x68");
+    Serial.println("!! MPU TIDAK menjawab di I2C 0x68");
     Serial.println("   Baca hasil pemindaian di atas:");
     Serial.println("   - KOSONG        -> kabel/daya: SDA=GPIO21, SCL=GPIO22,");
     Serial.println("                      VCC=3.3V, GND robot & MPU HARUS nyambung.");
