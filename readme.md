@@ -195,6 +195,18 @@ cd ../..
 python render_flowcharts.py      # Flowchart Images/*.png dari flowchart.md
 ```
 
+### Pengujian gerak
+
+Skrip di folder `Pengujian/` bisa dijalankan dari PC maupun laptop (path relatif, tidak bergantung mesin):
+
+```bash
+pip install -r Pengujian/requirements.txt
+python Pengujian/build_skenario.py                        # Rancangan_Skenario_Pengujian_Gerak.docx + .pdf
+python Pengujian/ukur_foto.py sebelum.jpg sesudah.jpg     # sudut belok aktual dari foto HP tampak atas
+```
+
+PDF dibuat lewat Microsoft Word atau LibreOffice bila tersedia; kalau tidak ada, cukup DOCX-nya.
+
 ---
 
 ## Dokumentasi
@@ -203,6 +215,7 @@ python render_flowcharts.py      # Flowchart Images/*.png dari flowchart.md
 - **[Dokumentasi Kode — Firmware Finalnew.ino](Master%20Code/Robot/New/Finalnew/Dokumentasi_Kode_Finalnew.pdf)** — penjelasan firmware.
 - **[Dokumentasi Kode — receiverArduino.py](Master%20Code/Transmitter/Dokumentasi_Kode_receiverArduino.pdf)** — entry point Pengendali Utama.
 - **[Troubleshooting NRF24](Master%20Code/Robot/New/Finalnew/Dokumentasi_Troubleshooting_NRF.pdf)** — masalah wiring/koneksi radio.
+- **[Rancangan Skenario Pengujian Gerak](Pengujian/Rancangan_Skenario_Pengujian_Gerak.pdf)** — 9 skenario uji (lurus, belok, kotak, zigzag) dengan pengukuran cukup HP + meteran.
 - **[flowchart.md](flowchart.md)** — diagram alur sistem, kedua sisi, siklus Request-Response, heading-hold, putaran closed-loop, path planning, sinyal balik.
 
 ---
