@@ -202,7 +202,7 @@ Skrip di folder `Pengujian/` bisa dijalankan dari PC maupun laptop (path relatif
 ```bash
 pip install -r Pengujian/requirements.txt
 python Pengujian/build_skenario.py                        # Rancangan_Skenario_Pengujian_Gerak.docx + .pdf
-python Pengujian/ukur_foto.py sebelum.jpg sesudah.jpg     # sudut belok aktual dari foto HP tampak atas
+python Pengujian/ukur_foto.py sebelum.jpg sesudah.jpg     # cross-check/dokumentasi sudut (data resmi tetap dari kompas)
 ```
 
 PDF dibuat lewat Microsoft Word atau LibreOffice bila tersedia; kalau tidak ada, cukup DOCX-nya.
