@@ -72,6 +72,23 @@ def _mark(ax, x, y, text, color):
     ax.text(x, y - 18, text, ha="center", va="top", fontsize=8.5, color=color, weight="bold")
 
 
+def _compass(ax, x, y, r=15, needle_deg=35):
+    ax.add_patch(Circle((x, y), r, fc="white", ec=INK, lw=1.3, zorder=6))
+    for a in range(0, 360, 30):
+        t = np.radians(a)
+        r0 = r * (0.78 if a % 90 else 0.6)
+        ax.plot([x + r0 * np.sin(t), x + r * np.sin(t)], [y + r0 * np.cos(t), y + r * np.cos(t)],
+                color="#94a3b8", lw=1, zorder=7)
+    ax.text(x, y + r * 0.78, "N", ha="center", va="center", fontsize=6.5, color=INK,
+            weight="bold", zorder=8)
+    t = np.radians(needle_deg)
+    ax.plot([x, x + r * 0.75 * np.sin(t)], [y, y + r * 0.75 * np.cos(t)], color=RED, lw=2,
+            zorder=8)
+    ax.plot([x, x - r * 0.55 * np.sin(t)], [y, y - r * 0.55 * np.cos(t)], color="#334155",
+            lw=2, zorder=8)
+    ax.add_patch(Circle((x, y), 1.6, fc=INK, ec="none", zorder=9))
+
+
 def _save(fig, name):
     GAMBAR.mkdir(exist_ok=True)
     path = GAMBAR / name
@@ -129,12 +146,17 @@ def fig_lurus():
 
 def fig_belok():
     fig, ax = plt.subplots(figsize=(10, 4.4))
-    ax.add_patch(Rectangle((-60, -60), 460, 120, fc=WATER, ec="none"))
-    _edge_h(ax, -60, 400, 60, below=False)
-    _robot(ax, 20, 30, 0, GHOST, filled=False, ls="--")
-    ax.plot([-15, 70], [30, 30], color=GHOST, lw=1, ls=(0, (4, 3)))
-    ax.text(20, 8, "SEBELUM\nsejajar tepi", ha="center", va="top", fontsize=9,
+    ax.add_patch(Rectangle((-60, -55), 460, 130, fc=WATER, ec="none"))
+    _edge_h(ax, -60, 400, 66, below=False, label="")
+    ax.text(300, 73, "tepi kolam (garis acuan 0°)", fontsize=8.8, color="#5b4523",
+            va="center", weight="bold")
+    _robot(ax, 20, 20, 0, GHOST, filled=False, ls="--")
+    ax.plot([-15, 70], [20, 20], color=GHOST, lw=1, ls=(0, (4, 3)))
+    ax.text(20, -2, "SEBELUM\nsejajar tepi", ha="center", va="top", fontsize=9,
             color="#475569", weight="bold")
+    _compass(ax, 20, 48, r=12, needle_deg=6)
+    ax.text(36, 48, "baca kompas\n(azimuth awal)", ha="left", va="center", fontsize=7.8,
+            color=INK)
     xa, ya, ha = 150, 0, -42
     _robot(ax, xa, ya, ha, ROBOT)
     t = np.radians(ha)
@@ -144,23 +166,30 @@ def fig_belok():
     arc = np.radians(np.linspace(0, ha, 30))
     ax.plot(xa + 45 * np.cos(arc), ya + 45 * np.sin(arc), color=RED, lw=1.8)
     ax.text(xa + 50, ya - 16, "sudut belok\naktual", color=RED, fontsize=9.5, weight="bold")
-    ax.text(xa - 5, 34, "SESUDAH diam", ha="center", fontsize=9, color=ROBOT, weight="bold")
+    ax.text(xa - 5, -22, "SESUDAH\ndiam", ha="center", va="top", fontsize=9, color=ROBOT,
+            weight="bold")
+    _compass(ax, xa - 5, 44, r=12, needle_deg=48)
+    ax.text(xa + 11, 44, "baca kompas lagi\n(azimuth akhir)", ha="left", va="center",
+            fontsize=7.8, color=INK)
     p = np.linspace(0, 1, 40)
-    ax.plot(20 + (xa - 20) * p, 30 + (ya - 30) * p ** 2, color=ROBOT, lw=1.2, alpha=0.5)
-    ax.text(80, -32, "CW: tepi di kiri robot → robot\nberbelok menjauhi tepi",
+    ax.plot(20 + (xa - 20) * p, 20 + (ya - 20) * p ** 2, color=ROBOT, lw=1.2, alpha=0.5)
+    ax.text(80, -40, "CW: tepi di kiri robot → robot\nberbelok menjauhi tepi",
             fontsize=8.5, color="#475569", ha="center")
-    ax.text(222, 38, "1. Foto HP dari atas, sebelum & sesudah\n"
-            "   (tepi kolam ikut masuk foto)\n"
-            "2. Di laptop/PC:\n"
-            "   python ukur_foto.py sebelum.jpg sesudah.jpg\n"
-            "3. Skrip menampilkan sudut belok aktual",
-            fontsize=8.4, va="top", color=INK, family="DejaVu Sans",
+    ax.text(222, 52, "1. Sebelum kirim perintah: tempelkan kompas\n"
+            "   sejajar buritan→haluan robot, catat azimuth awal\n"
+            "2. Kirim perintah CW/CCW\n"
+            "3. Setelah FIN & robot diam, baca kompas lagi di\n"
+            "   posisi sama, catat azimuth akhir\n"
+            "4. Sudut belok aktual = |azimuth akhir − azimuth awal|",
+            fontsize=8.2, va="top", color=INK, family="DejaVu Sans",
             bbox=dict(boxstyle="round,pad=0.5", fc="white", ec="#cbd5e1"))
+    ax.text(222, -32, "Jauhkan kompas ± 20 cm dari ESC/motor —\nmedan magnet motor bisa "
+            "mengganggu bacaan.", fontsize=7.6, va="top", color="#b45309", style="italic")
     ax.set_xlim(-60, 400)
-    ax.set_ylim(-62, 76)
+    ax.set_ylim(-56, 84)
     ax.set_aspect("equal")
     ax.axis("off")
-    ax.set_title("Pengukuran sudut belok dari foto HP tampak atas", fontsize=12,
+    ax.set_title("Pengukuran sudut belok dengan kompas", fontsize=12,
                  weight="bold", color=INK, loc="left")
     return _save(fig, "fig_setup_belok.png")
 
@@ -495,11 +524,11 @@ def build(fig):
         ["Berapa kali pengulangan?",
          "Setiap skenario diulang 5 kali (5 data valid), sehingga total 45 percobaan."],
         ["Bagaimana cara mengukurnya?",
-         "Cukup dengan HP dan meteran. Tepi kolam dipakai sebagai garis lurus acuan. Jarak "
-         "diukur dengan meteran di sepanjang tepi kolam; sudut diukur dari foto HP tampak atas "
-         "yang dihitung dengan skrip ukur_foto.py di laptop. Hasil ukur dibandingkan dengan "
-         "perintah dan dengan pembacaan MPU di log GUI, lalu dihitung galat, akurasi, dan "
-         "simpangan bakunya."],
+         "Dengan alat ukur fisik, bukan hasil hitungan software: meteran untuk jarak, kompas "
+         "untuk sudut. Tepi kolam dipakai sebagai garis lurus acuan. Jarak diukur dengan meteran "
+         "di sepanjang tepi kolam; sudut dibaca langsung dari kompas sebelum dan sesudah belok. "
+         "Hasil ukur dibandingkan dengan perintah dan dengan pembacaan MPU di log GUI, lalu "
+         "dihitung galat, akurasi, dan simpangan bakunya."],
     ], [4.2, 12.2], size=10)
 
     # ---------------- 1 ----------------
@@ -608,22 +637,26 @@ def build(fig):
 
     # ---------------- 5 ----------------
     D.h1("5. Alat")
-    D.p("Pengujian cukup memakai alat yang sudah dimiliki:")
+    D.p("Semua pengukuran memakai alat ukur fisik — hasil bacaan langsung dari alat, bukan nilai "
+        "yang dihitung oleh program dari foto atau data robot:")
     D.table(["No", "Alat", "Fungsi"], [
-        ["1", "HP", "Memotret robot dari atas (untuk sudut) dan stopwatch"],
-        ["2", "Meteran gulung (≥ 3 m)", "Mengukur jarak di sepanjang tepi kolam dan jarak robot ke tepi"],
-        ["3", "Laptop/PC berisi repositori skripsi",
-         "Menjalankan ukur_foto.py untuk menghitung sudut dari foto"],
+        ["1", "Meteran gulung (≥ 3 m)",
+         "Mengukur jarak di sepanjang tepi kolam dan jarak robot ke tepi (skenario A, C)"],
+        ["2", "Kompas orientasi/bidik kecil",
+         "Membaca arah hadap robot (azimuth) sebelum dan sesudah belok (skenario B, C)"],
+        ["3", "HP", "Stopwatch dan dokumentasi foto (bukti pelaksanaan, bukan sumber data sudut)"],
         ["4", "Raspberry Pi + GUI (bagian dari sistem)",
          "Mengirim perintah; mencatat waktu ON/FIN dan yaw MPU secara otomatis"],
     ], [1.0, 6.4, 9.0], size=10, center=(0,))
     D.p("Dari lokasi hanya dimanfaatkan tepi kolam yang lurus sebagai garis acuan 0°, dan benda "
         "apa saja (batu, sandal, kapur, selotip) sebagai tanda titik di tepi kolam. Hasil dicatat "
         "di lembar data (Lampiran) atau langsung di HP.")
-    D.note("pengukuran minimal dengan HP dan meteran tetap diperlukan dan tidak bisa diganti "
-           "data robot. Sinyal FIN dan sensor MPU berasal dari robot sendiri, sehingga tidak dapat "
+    D.note("pengukuran dengan meteran dan kompas tetap diperlukan dan tidak bisa diganti data "
+           "robot. Sinyal FIN dan sensor MPU berasal dari robot sendiri, sehingga tidak dapat "
            "membuktikan bahwa robot benar-benar bergerak sesuai perintah — itulah yang ingin "
-           "dibuktikan oleh pengujian ini.", lead="Mengapa tetap perlu alat ukur: ")
+           "dibuktikan oleh pengujian ini. Perhitungan sudut dari foto (skrip di laptop) juga "
+           "tidak dipakai sebagai data resmi karena statusnya sama seperti yang sedang diuji: "
+           "hasil olahan, bukan pembanding independen.", lead="Mengapa harus alat ukur fisik: ")
 
     # ---------------- 6 ----------------
     D.h1("6. Metode Pengukuran")
@@ -632,7 +665,7 @@ def build(fig):
         ["Perintah (target)", "Yang dikirim dari GUI, mis. FW:100", "Acuan pembanding"],
         ["Menurut sistem robot", "Sinyal FIN dan yaw MPU di log GUI",
          "Menunjukkan apa yang “dikira” robot"],
-        ["Aktual", "Diukur dari luar robot: meteran dan foto HP",
+        ["Aktual", "Diukur dari luar robot dengan alat fisik: meteran dan kompas",
          "Kebenaran lapangan, dasar penilaian"],
     ], [4.0, 6.4, 6.0], size=10)
     D.p("Keberhasilan gerak dinilai dari selisih nilai aktual terhadap perintah. Nilai MPU tidak "
@@ -661,33 +694,34 @@ def build(fig):
            "ini perlu diperhitungkan terutama pada A1 (50 cm).")
 
     D.h2("6.4 Pengukuran belok (B1–B4)")
-    D.figure(fig["belok"], "Gambar 3. Pengukuran sudut belok dari foto HP tampak atas", 15.5)
+    D.figure(fig["belok"], "Gambar 3. Pengukuran sudut belok dengan kompas", 15.5)
     D.steps([
         "Letakkan robot sejajar tepi kolam. Untuk CW, tepi kolam berada di sisi kiri robot; untuk "
         "CCW, di sisi kanan, sehingga robot selalu berbelok menjauhi tepi.",
-        "Catat yaw MPU awal dari GUI, lalu foto robot dari atas (foto “sebelum”). Tepi kolam harus "
-        "ikut masuk ke foto.",
-        "Kirim perintah. Setelah FIN diterima dan robot berhenti berputar, foto lagi (foto "
-        "“sesudah”) dan catat yaw MPU akhir.",
-        ("Sudut aktual ", "dihitung di laptop/PC dengan perintah di bawah. Pada tiap foto klik dua "
-         "titik di tepi kolam, lalu buritan dan haluan robot; skrip menampilkan besar sudut belok "
-         "dan menyimpan foto beranotasi sebagai bukti."),
+        ("Azimuth awal ", "= bacaan kompas saat ditempelkan sejajar sumbu buritan→haluan robot, "
+         "dicatat sebelum perintah dikirim. Catat juga yaw MPU awal dari GUI."),
+        "Kirim perintah. Setelah FIN diterima dan robot berhenti berputar, tunggu hingga benar-"
+        "benar diam.",
+        ("Azimuth akhir ", "= bacaan kompas dengan cara yang sama, di posisi robot yang baru. "
+         "Catat juga yaw MPU akhir dari GUI."),
+        ("Sudut aktual ", "= |azimuth akhir − azimuth awal| (dikoreksi ke rentang 0–180° bila "
+         "melewati 0°/360°)."),
         ("Sudut MPU ", "= yaw akhir − yaw awal dari log GUI."),
     ])
-    D.code("python Pengujian/ukur_foto.py sebelum.jpg sesudah.jpg")
-    D.note("foto diambil setegak mungkin tepat di atas robot (misalnya lengan diangkat di atas "
-           "robot dari tepi kolam). Foto yang miring membuat sudut terbaca meleset.")
+    D.note("tempelkan kompas kira-kira 20 cm dari ESC/motor — medan magnet motor dapat "
+           "mengganggu bacaan. Foto sebelum/sesudah tetap boleh diambil sebagai dokumentasi "
+           "pelaksanaan, tetapi bukan sumber angka sudut aktual.")
 
     D.h2("6.5 Pengukuran kombinasi (C1–C2)")
     D.p("C1 — Kotak 1 × 2 m", bold=True, after=2)
     D.steps([
         "Robot sejajar tepi kolam dengan tepi di sisi kiri robot, ± 30 cm dari tepi. Beri tanda "
-        "start di tepi dan foto robot dari atas.",
+        "start di tepi dan catat azimuth awal dengan kompas.",
         "Kirim delapan perintah berurutan dari halaman MANUAL sesuai tabel skenario; perintah "
         "berikutnya dikirim setelah FIN perintah sebelumnya diterima.",
         ("Galat penutupan ", "= jarak lurus titik tengah robot ke titik start setelah robot diam: "
          "ukur pergeseran di sepanjang tepi (Δx) dan selisih jarak ke tepi terhadap 30 cm (Δy)."),
-        ("Galat arah akhir ", "= sudut dari foto sebelum dan sesudah dengan ukur_foto.py "
+        ("Galat arah akhir ", "= |azimuth akhir − azimuth awal| dibaca kompas di posisi akhir "
          "(ideal 0°, karena total belokan 360°)."),
     ])
     D.p("C2 — Misi zigzag mini", bold=True, after=2)
@@ -750,6 +784,9 @@ def build(fig):
     D.steps([
         "Periksa arah putar: kirim CW:90. Bila robot berputar ke kiri, ubah YAW_SIGN menjadi −1.",
         "Kirim FW:200 sebanyak 3 kali, ukur jarak nyata, lalu sesuaikan ROBOT_SPEED_MPS.",
+        "Uji gangguan magnet pada kompas: dengan robot diam dan motor hidup-mati, dekatkan "
+        "kompas ke posisi baca yang akan dipakai. Bila jarum bergeser, jauhkan kompas (mis. "
+        "diletakkan di ujung penggaris yang sejajar sumbu robot) sampai jarum tidak terpengaruh.",
         "Setelah kalibrasi selesai, seluruh konstanta firmware dikunci dan tidak diubah selama "
         "pengujian resmi.",
     ])
@@ -765,15 +802,14 @@ def build(fig):
     D.h2("9.3 Langkah setiap percobaan")
     D.steps([
         "Letakkan robot di titik start sesuai skenario dan tunggu sampai diam (tidak hanyut).",
-        "Catat yaw MPU awal dari GUI; untuk skenario B dan C, foto robot dari atas.",
+        "Catat yaw MPU awal dari GUI; untuk skenario B dan C, baca dan catat azimuth awal "
+        "dengan kompas.",
         "Kirim perintah dari GUI (halaman MANUAL untuk A, B, C1; halaman MISI untuk C2).",
         "Tunggu FIN, lalu tunggu robot diam ± 3 detik.",
-        "Ukur dengan meteran dan/atau foto lagi, lalu catat ke lembar data, termasuk yaw MPU "
-        "akhir dan ada/tidaknya kirim ulang.",
+        "Ukur dengan meteran dan/atau baca kompas lagi, lalu catat ke lembar data, termasuk yaw "
+        "MPU akhir dan ada/tidaknya kirim ulang.",
         "Kembalikan robot ke titik start, lalu ulangi hingga 5 percobaan valid.",
     ])
-    D.p("Agar foto mudah dicocokkan, catat urutan foto di lembar data atau ganti nama filenya "
-        "sesuai kode percobaan, mis. B2-3-sebelum.jpg dan B2-3-sesudah.jpg.")
     D.h2("9.4 Percobaan yang gagal")
     D.p("Percobaan yang gagal (sinyal hilang, robot menabrak tepi, terbawa angin, dan sebagainya) "
         "tetap dicatat beserta penyebabnya, lalu diganti dengan percobaan baru sampai terkumpul 5 "
@@ -823,17 +859,17 @@ def build(fig):
                       ("A3", "FW:200 (target 200 cm)")):
         lembar(f"Skenario {code} — {cmd}", a_h, a_w)
     b_h = ["Perc.", "Yaw MPU awal (°)", "Yaw MPU akhir (°)", "Sudut MPU (°)",
-           "Sudut aktual dari foto (°)", "Galat aktual (°)", "Galat MPU vs aktual (°)",
-           "Kirim ulang? (Y/T)", "Keterangan / nama foto"]
-    b_w = [2.0, 2.6, 2.6, 2.4, 2.8, 2.5, 3.0, 2.5, 5.7]
+           "Azimuth kompas awal (°)", "Azimuth kompas akhir (°)", "Sudut aktual (°)",
+           "Galat aktual (°)", "Galat MPU vs aktual (°)", "Kirim ulang? (Y/T)", "Keterangan"]
+    b_w = [1.7, 2.1, 2.1, 1.9, 2.3, 2.3, 2.1, 2.1, 2.3, 1.9, 5.3]
     for code, cmd in (("B1", "CW:45 (target 45°)"), ("B2", "CW:90 (target 90°)"),
                       ("B3", "CCW:45 (target 45°)"), ("B4", "CCW:90 (target 90°)")):
         lembar(f"Skenario {code} — {cmd}", b_h, b_w)
     lembar("Skenario C1 — Kotak 1 × 2 m (target: kembali ke start, arah semula)",
            ["Perc.", "Δx sepanjang tepi (cm)", "Jarak ke tepi (cm) [30]", "Δy (cm)",
-            "Galat penutupan (cm)", "Galat arah akhir (°)", "FIN (…/8)", "Waktu total (s)",
-            "Keterangan / nama foto"],
-           [2.0, 2.8, 2.8, 2.2, 2.8, 2.7, 2.2, 2.6, 6.0])
+            "Galat penutupan (cm)", "Azimuth awal (°)", "Azimuth akhir (°)",
+            "Galat arah akhir (°)", "FIN (…/8)", "Waktu total (s)", "Keterangan"],
+           [1.7, 2.4, 2.4, 1.9, 2.4, 2.2, 2.2, 2.3, 1.8, 2.2, 5.5])
     lembar("Skenario C2 — Zigzag mini 2 × 3 m (target: titik akhir 3 m dari start, 50 cm dari tepi)",
            ["Perc.", "Δx dari titik akhir (cm)", "Jarak ke tepi (cm) [50]", "Δy (cm)",
             "Galat titik akhir (cm)", "FIN (…/13)", "Kirim ulang (kali)", "Waktu total (s)",

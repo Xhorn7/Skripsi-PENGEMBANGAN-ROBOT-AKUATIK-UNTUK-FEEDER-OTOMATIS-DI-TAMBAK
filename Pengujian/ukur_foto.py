@@ -1,6 +1,11 @@
 """
 Ukur arah robot dari foto HP tampak atas, memakai tepi kolam sebagai garis 0 derajat.
 
+Alat bantu dokumentasi/cross-check, BUKAN sumber data resmi sudut belok — nilai
+itu diukur langsung dengan kompas fisik saat pengujian (lihat bagian 6.4 di
+Rancangan_Skenario_Pengujian_Gerak.docx). Skrip ini boleh dipakai untuk
+membandingkan bacaan kompas dengan hasil olahan foto sebagai pemeriksaan silang.
+
     python ukur_foto.py foto.jpg                  arah robot terhadap tepi kolam
     python ukur_foto.py sebelum.jpg sesudah.jpg   besar sudut belok
 
