@@ -201,8 +201,7 @@ Skrip di folder `Pengujian/` bisa dijalankan dari PC maupun laptop (path relatif
 
 ```bash
 pip install -r Pengujian/requirements.txt
-python Pengujian/build_skenario.py                        # Rancangan_Skenario_Pengujian_Gerak.docx + .pdf
-python Pengujian/ukur_foto.py sebelum.jpg sesudah.jpg     # cross-check/dokumentasi sudut (data resmi tetap dari kompas)
+python Pengujian/build_skenario.py      # Rancangan_Skenario_Pengujian_Gerak.docx + .pdf
 ```
 
 PDF dibuat lewat Microsoft Word atau LibreOffice bila tersedia; kalau tidak ada, cukup DOCX-nya.
@@ -215,7 +214,7 @@ PDF dibuat lewat Microsoft Word atau LibreOffice bila tersedia; kalau tidak ada,
 - **[Dokumentasi Kode — Firmware Finalnew.ino](Master%20Code/Robot/New/Finalnew/Dokumentasi_Kode_Finalnew.pdf)** — penjelasan firmware.
 - **[Dokumentasi Kode — receiverArduino.py](Master%20Code/Transmitter/Dokumentasi_Kode_receiverArduino.pdf)** — entry point Pengendali Utama.
 - **[Troubleshooting NRF24](Master%20Code/Robot/New/Finalnew/Dokumentasi_Troubleshooting_NRF.pdf)** — masalah wiring/koneksi radio.
-- **[Rancangan Skenario Pengujian Gerak](Pengujian/Rancangan_Skenario_Pengujian_Gerak.pdf)** — 9 skenario uji (lurus, belok, kotak, zigzag) dengan pengukuran cukup HP + meteran.
+- **[Rancangan Skenario Pengujian Gerak](Pengujian/Rancangan_Skenario_Pengujian_Gerak.pdf)** — 9 skenario uji (lurus, belok, kotak, zigzag) di kolam uji 5 × 2 m, posisi robot diukur dengan grid keramik lantai kolam.
 - **[flowchart.md](flowchart.md)** — diagram alur sistem, kedua sisi, siklus Request-Response, heading-hold, putaran closed-loop, path planning, sinyal balik.
 
 ---

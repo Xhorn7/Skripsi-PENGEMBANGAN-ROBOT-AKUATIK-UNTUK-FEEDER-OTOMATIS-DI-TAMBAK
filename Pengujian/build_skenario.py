@@ -35,7 +35,6 @@ OUT_DOCX = HERE / "Rancangan_Skenario_Pengujian_Gerak.docx"
 # Gambar
 # =====================================================================
 INK = "#1f2933"
-EDGE = "#8b6b3d"
 ROBOT = "#2563eb"
 GHOST = "#94a3b8"
 RED = "#dc2626"
@@ -44,212 +43,178 @@ WATER = "#e0f2fe"
 plt.rcParams.update({"font.family": "DejaVu Sans", "font.size": 10})
 
 
-def _robot(ax, x, y, heading_deg, color, filled=True, ls="-"):
-    L, W = 36, 22
-    t = np.radians(heading_deg)
-    fwd = np.array([np.cos(t), np.sin(t)])
-    side = np.array([-np.sin(t), np.cos(t)])
-    c = np.array([x, y])
-    pts = [c + fwd * L * 0.3 + side * W / 2, c + fwd * L / 2,
-           c + fwd * L * 0.3 - side * W / 2, c - fwd * L / 2 - side * W / 2,
-           c - fwd * L / 2 + side * W / 2]
-    ax.add_patch(Polygon(pts, closed=True, fc=color if filled else "none", ec=color,
-                         lw=1.6, ls=ls, alpha=0.9 if filled else 1))
-    ax.add_patch(Circle(c, 2.6, fc="white", ec=INK, lw=0.8, zorder=6))
-
-
-def _edge_h(ax, x0, x1, y, below=True, label="tepi kolam (garis acuan 0°)"):
-    h = 14
-    ax.add_patch(Rectangle((x0, y - h if below else y), x1 - x0, h, fc="#d6c7a1",
-                           ec="none", hatch="///", alpha=0.9))
-    ax.plot([x0, x1], [y, y], color=EDGE, lw=2.4)
-    ax.text(x0 + 3, y - h / 2 if below else y + h / 2, label, fontsize=8.8, color="#5b4523",
-            va="center", weight="bold")
-
-
-def _mark(ax, x, y, text, color):
-    ax.plot([x], [y], marker="X", ms=10, color=color, mec="black", mew=0.6, zorder=7)
-    ax.text(x, y - 18, text, ha="center", va="top", fontsize=8.5, color=color, weight="bold")
-
-
-def _compass(ax, x, y, r=15, needle_deg=35):
-    ax.add_patch(Circle((x, y), r, fc="white", ec=INK, lw=1.3, zorder=6))
-    for a in range(0, 360, 30):
-        t = np.radians(a)
-        r0 = r * (0.78 if a % 90 else 0.6)
-        ax.plot([x + r0 * np.sin(t), x + r * np.sin(t)], [y + r0 * np.cos(t), y + r * np.cos(t)],
-                color="#94a3b8", lw=1, zorder=7)
-    ax.text(x, y + r * 0.78, "N", ha="center", va="center", fontsize=6.5, color=INK,
-            weight="bold", zorder=8)
-    t = np.radians(needle_deg)
-    ax.plot([x, x + r * 0.75 * np.sin(t)], [y, y + r * 0.75 * np.cos(t)], color=RED, lw=2,
-            zorder=8)
-    ax.plot([x, x - r * 0.55 * np.sin(t)], [y, y - r * 0.55 * np.cos(t)], color="#334155",
-            lw=2, zorder=8)
-    ax.add_patch(Circle((x, y), 1.6, fc=INK, ec="none", zorder=9))
-
-
-def _save(fig, name):
+def _save(fig, name, rect=None):
     GAMBAR.mkdir(exist_ok=True)
     path = GAMBAR / name
-    fig.tight_layout()
+    fig.tight_layout(rect=rect)
     fig.savefig(path, dpi=200, bbox_inches="tight", pad_inches=0.08)
     plt.close(fig)
     return path
 
 
-def fig_lurus():
-    fig, ax = plt.subplots(figsize=(10, 4.2))
-    ax.add_patch(Rectangle((-45, 0), 340, 105, fc=WATER, ec="none"))
-    _edge_h(ax, -45, 295, 0, below=True, label="tepi kolam")
-    y0 = 30
-    ax.plot([0, 245], [y0, y0], color=GHOST, lw=1.2, ls=(0, (5, 4)))
-    ax.text(110, y0 - 4, "garis lurus rencana", fontsize=8.5, color="#64748b",
-            ha="center", va="top")
-    _robot(ax, 0, y0, 0, GHOST, filled=False, ls="--")
-    ax.text(0, y0 + 20, "START", ha="center", fontsize=9, color="#475569", weight="bold")
-    xe, ye = 188, y0 + 17
-    _robot(ax, xe, ye, 5, ROBOT)
-    ax.text(xe - 40, ye + 14, "posisi akhir\n(setelah diam)", ha="center", fontsize=9,
-            color=ROBOT, weight="bold")
-    xs = np.linspace(0, xe, 60)
-    ax.plot(xs, y0 + (ye - y0) * (xs / xe) ** 1.8, color=ROBOT, lw=1.4, alpha=0.6)
+KERAMIK_CM = 25
+KOLAM_KOLOM, KOLAM_BARIS = 8, 20
+ROBOT_P_CM, ROBOT_L_CM = 60, 42
 
-    ax.plot([0, 0], [y0 - 3, 0], color=GREEN, lw=1, ls=":")
-    ax.plot([xe, xe], [ye - 3, 0], color=GREEN, lw=1, ls=":")
-    _mark(ax, 0, 0, "tanda start", GREEN)
-    _mark(ax, xe, 0, "tanda akhir", GREEN)
-    ax.add_patch(FancyArrowPatch((0, -36), (xe, -36), arrowstyle="<|-|>",
-                                 mutation_scale=10, color=GREEN, lw=1.4))
-    ax.text(xe / 2, -40, "d aktual = jarak dua tanda, diukur meteran di sepanjang tepi",
-            ha="center", va="top", fontsize=9.5, color=GREEN, weight="bold")
 
-    ax.add_patch(FancyArrowPatch((xe + 34, 0), (xe + 34, ye), arrowstyle="<|-|>",
-                                 mutation_scale=9, color=RED, lw=1.3))
-    ax.plot([xe, xe + 38], [ye, ye], color=RED, lw=0.8, ls=":")
-    ax.text(xe + 40, ye / 2 + 2, "jarak robot ke tepi\n(meteran)\ne lateral = jarak − 30 cm",
-            fontsize=8.8, color=RED, va="center", weight="bold")
-    ax.add_patch(FancyArrowPatch((-32, 0), (-32, y0), arrowstyle="<|-|>",
-                                 mutation_scale=8, color="#475569", lw=1))
-    ax.text(-35, y0 / 2, "30 cm", fontsize=8.5, color="#475569", ha="right", va="center")
-    ax.text(-40, 98, "Cukup meteran. Tepi kolam = garis lurus acuan; batu/sandal/kapur = tanda.",
-            fontsize=9, color=INK, va="top")
-
-    ax.set_xlim(-48, 298)
-    ax.set_ylim(-58, 106)
+def _kolam(ax, title):
+    ax.add_patch(Rectangle((0, 0), KOLAM_KOLOM, KOLAM_BARIS, fc=WATER, ec="#1e3a8a", lw=2.2))
+    for i in range(1, KOLAM_KOLOM):
+        ax.plot([i, i], [0, KOLAM_BARIS], color="#93c5fd", lw=0.7)
+    for j in range(1, KOLAM_BARIS):
+        ax.plot([0, KOLAM_KOLOM], [j, j], color="#93c5fd", lw=0.7)
+    ax.set_xticks(range(0, KOLAM_KOLOM + 1))
+    ax.set_yticks(range(0, KOLAM_BARIS + 1, 2))
+    ax.tick_params(labelsize=7, length=2)
+    ax.set_xlim(-0.3, KOLAM_KOLOM + 0.3)
+    ax.set_ylim(-0.6, KOLAM_BARIS + 0.3)
     ax.set_aspect("equal")
-    ax.axis("off")
-    ax.set_title("Pengukuran gerak lurus (tampak atas)", fontsize=12, weight="bold",
-                 color=INK, loc="left")
-    return _save(fig, "fig_setup_lurus.png")
+    for s in ax.spines.values():
+        s.set_visible(False)
+    ax.set_title(title, fontsize=9.5, weight="bold", color=INK, loc="left")
 
 
-def fig_belok():
-    fig, ax = plt.subplots(figsize=(10, 4.4))
-    ax.add_patch(Rectangle((-60, -55), 460, 130, fc=WATER, ec="none"))
-    _edge_h(ax, -60, 400, 66, below=False, label="")
-    ax.text(300, 73, "tepi kolam (garis acuan 0°)", fontsize=8.8, color="#5b4523",
-            va="center", weight="bold")
-    _robot(ax, 20, 20, 0, GHOST, filled=False, ls="--")
-    ax.plot([-15, 70], [20, 20], color=GHOST, lw=1, ls=(0, (4, 3)))
-    ax.text(20, -2, "SEBELUM\nsejajar tepi", ha="center", va="top", fontsize=9,
-            color="#475569", weight="bold")
-    _compass(ax, 20, 48, r=12, needle_deg=6)
-    ax.text(36, 48, "baca kompas\n(azimuth awal)", ha="left", va="center", fontsize=7.8,
-            color=INK)
-    xa, ya, ha = 150, 0, -42
-    _robot(ax, xa, ya, ha, ROBOT)
-    t = np.radians(ha)
-    ax.plot([xa - 45 * np.cos(t), xa + 60 * np.cos(t)],
-            [ya - 45 * np.sin(t), ya + 60 * np.sin(t)], color=ROBOT, lw=1, ls=(0, (4, 3)))
-    ax.plot([xa - 20, xa + 70], [ya, ya], color=GHOST, lw=1, ls=(0, (4, 3)))
-    arc = np.radians(np.linspace(0, ha, 30))
-    ax.plot(xa + 45 * np.cos(arc), ya + 45 * np.sin(arc), color=RED, lw=1.8)
-    ax.text(xa + 50, ya - 16, "sudut belok\naktual", color=RED, fontsize=9.5, weight="bold")
-    ax.text(xa - 5, -22, "SESUDAH\ndiam", ha="center", va="top", fontsize=9, color=ROBOT,
-            weight="bold")
-    _compass(ax, xa - 5, 44, r=12, needle_deg=48)
-    ax.text(xa + 11, 44, "baca kompas lagi\n(azimuth akhir)", ha="left", va="center",
-            fontsize=7.8, color=INK)
-    p = np.linspace(0, 1, 40)
-    ax.plot(20 + (xa - 20) * p, 20 + (ya - 20) * p ** 2, color=ROBOT, lw=1.2, alpha=0.5)
-    ax.text(80, -40, "CW: tepi di kiri robot → robot\nberbelok menjauhi tepi",
-            fontsize=8.5, color="#475569", ha="center")
-    ax.text(222, 52, "1. Sebelum kirim perintah: tempelkan kompas\n"
-            "   sejajar buritan→haluan robot, catat azimuth awal\n"
-            "2. Kirim perintah CW/CCW\n"
-            "3. Setelah FIN & robot diam, baca kompas lagi di\n"
-            "   posisi sama, catat azimuth akhir\n"
-            "4. Sudut belok aktual = |azimuth akhir − azimuth awal|",
-            fontsize=8.2, va="top", color=INK, family="DejaVu Sans",
-            bbox=dict(boxstyle="round,pad=0.5", fc="white", ec="#cbd5e1"))
-    ax.text(222, -32, "Jauhkan kompas ± 20 cm dari ESC/motor —\nmedan magnet motor bisa "
-            "mengganggu bacaan.", fontsize=7.6, va="top", color="#b45309", style="italic")
-    ax.set_xlim(-60, 400)
-    ax.set_ylim(-56, 84)
-    ax.set_aspect("equal")
-    ax.axis("off")
-    ax.set_title("Pengukuran sudut belok dengan kompas", fontsize=12,
-                 weight="bold", color=INK, loc="left")
-    return _save(fig, "fig_setup_belok.png")
-
-
-def _path(ax, pts, labels, turns, title):
+def _jalur(ax, pts, color=ROBOT):
     xs, ys = zip(*pts)
-    ax.plot(xs, ys, color=ROBOT, lw=2.2, marker="o", ms=4)
+    ax.plot(xs, ys, color=color, lw=2.2, marker="o", ms=3.5, zorder=4)
     for (x1, y1), (x2, y2) in zip(pts, pts[1:]):
-        ax.add_patch(FancyArrowPatch((x1, y1), ((x1 + x2) / 2 + (x2 - x1) * 0.05,
-                                                (y1 + y2) / 2 + (y2 - y1) * 0.05),
-                                     arrowstyle="-|>", mutation_scale=14, color=ROBOT, lw=0))
-    for x, y, txt, ha, va in labels:
-        ax.text(x, y, txt, ha=ha, va=va, fontsize=8.6, color=INK,
-                bbox=dict(boxstyle="round,pad=0.22", fc="white", ec="#cbd5e1", lw=0.8))
-    for x, y, txt, ha, va in turns:
-        ax.text(x, y, txt, ha=ha, va=va, fontsize=8.2, color=RED, weight="bold")
-    ax.plot(*pts[0], marker="*", ms=16, color=GREEN, zorder=5)
-    ax.set_title(title, fontsize=10.5, weight="bold", color=INK, loc="left")
-    ax.set_aspect("equal")
-    ax.grid(True, color="#e2e8f0", lw=0.8)
-    ax.set_xlabel("x (m)")
-    ax.set_ylabel("y (m)")
+        ax.add_patch(FancyArrowPatch((x1, y1), ((x1 + x2) / 2 + (x2 - x1) * 0.08,
+                                                (y1 + y2) / 2 + (y2 - y1) * 0.08),
+                                     arrowstyle="-|>", mutation_scale=11, color=color, lw=0,
+                                     zorder=5))
+    ax.plot(*pts[0], marker="*", ms=13, color=GREEN, mec="black", mew=0.5, zorder=6)
 
 
-def fig_kombinasi():
-    fig, (a1, a2) = plt.subplots(1, 2, figsize=(11, 5), gridspec_kw={"width_ratios": [1, 1.3]})
-    a1.axvspan(-1.2, -0.3, color="#d6c7a1", alpha=0.8, hatch="///", lw=0)
-    a1.axvline(-0.3, color=EDGE, lw=2.4)
-    a1.text(-0.75, 1.6, "tepi\nkolam", ha="center", fontsize=8.5, color="#5b4523", weight="bold")
-    _path(a1, [(0, 0), (0, 1), (2, 1), (2, 0), (0, 0)],
-          [(0.08, 0.5, "1. FW:100", "left", "center"), (1.0, 1.08, "3. FW:200", "center", "bottom"),
-           (1.92, 0.5, "5. FW:100", "right", "center"), (1.0, -0.08, "7. FW:200", "center", "top")],
-          [(0.05, 1.05, "2. CW:90", "left", "bottom"), (1.95, 1.05, "4. CW:90", "right", "bottom"),
-           (2.05, -0.05, "6. CW:90", "left", "top"), (0.1, -0.28, "8. CW:90", "left", "top")],
-          "C1 - Kotak 1 x 2 m (4x belok kanan 90°)")
-    a1.text(0.0, -0.5, "START = FINISH", ha="left", va="top", fontsize=8.5, color=GREEN,
-            weight="bold")
-    a1.set_xlim(-1.2, 2.7)
-    a1.set_ylim(-0.8, 1.9)
+def _lbl(ax, x, y, t, color=INK, ha="left", size=7.2, weight="normal"):
+    ax.text(x, y, t, fontsize=size, color=color, ha=ha, va="center", weight=weight,
+            bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.85), zorder=7)
 
-    a2.axhspan(-1.2, -0.5, color="#d6c7a1", alpha=0.8, hatch="///", lw=0)
-    a2.axhline(-0.5, color=EDGE, lw=2.4)
-    a2.text(1.5, -0.85, "tepi kolam", ha="center", fontsize=8.5, color="#5b4523", weight="bold")
-    zz = [(0, 0), (0, 2), (1, 2), (1, 0), (2, 0), (2, 2), (3, 2), (3, 0)]
-    _path(a2, zz,
-          [(-0.08, 1.0, "FW:200", "right", "center"), (0.5, 2.08, "FW:100", "center", "bottom"),
-           (0.92, 1.0, "FW:200", "right", "center"), (1.5, -0.08, "FW:100", "center", "top"),
-           (1.92, 1.0, "FW:200", "right", "center"), (2.5, 2.08, "FW:100", "center", "bottom"),
-           (3.08, 1.0, "FW:200", "left", "center")],
-          [(0.0, 2.3, "CW:90", "center", "bottom"), (1.0, 2.3, "CW:90", "center", "bottom"),
-           (1.0, -0.2, "CCW:90", "center", "top"), (2.0, -0.2, "CCW:90", "center", "top"),
-           (2.0, 2.3, "CW:90", "center", "bottom"), (3.0, 2.3, "CW:90", "center", "bottom")],
-          "C2 - Zigzag mini (tambak 2 x 3 m, lintasan 1 m)")
-    a2.text(0.05, -0.2, "START", ha="left", va="top", fontsize=8.5, color=GREEN, weight="bold")
-    a2.plot([3], [0], marker="X", ms=11, color=GREEN, mec="black", zorder=6)
-    a2.text(3.12, 0.05, "FINISH\n(3 m, 0)", ha="left", va="bottom", fontsize=8.5,
-            color=GREEN, weight="bold")
-    a2.set_xlim(-0.8, 3.8)
-    a2.set_ylim(-1.2, 2.7)
-    return _save(fig, "fig_lintasan_kombinasi.png")
+
+def fig_kolam():
+    fig, axs = plt.subplots(1, 4, figsize=(12, 7.6))
+    a, b, c, d = axs
+
+    _kolam(a, "A · Lurus")
+    for y_end, cmd, col in ((4, "FW:50", "#16a34a"), (6, "FW:100", "#ea580c"),
+                            (10, "FW:200", RED)):
+        a.plot([3.85, 4.15], [y_end, y_end], color=col, lw=2.2, zorder=5)
+        _lbl(a, 4.4, y_end, f"{cmd} → baris {y_end}", col)
+    _jalur(a, [(4, 2), (4, 10)])
+    _lbl(a, 4.4, 2, "start: kolom 4, baris 2", GREEN, weight="bold")
+    _lbl(a, 0.2, 15.5, "maju di tengah kolam\n(kolom 4)\n\n50 cm = 2 keramik\n"
+         "100 cm = 4 keramik\n200 cm = 8 keramik", INK, size=7)
+
+    _kolam(b, "B · Belok")
+    th = np.radians(np.linspace(180, 90, 30))
+    b.plot(1.5, 5, marker="*", ms=13, color=GREEN, mec="black", mew=0.5, zorder=6)
+    b.plot([1.5, 1.5], [5, 6.5], color=ROBOT, lw=2.2)
+    b.plot(2.5 + np.cos(th), 6.5 + np.sin(th), color=ROBOT, lw=2.2)
+    b.add_patch(FancyArrowPatch((2.5, 7.5), (3.9, 7.5), arrowstyle="-|>", mutation_scale=11,
+                                color=ROBOT, lw=2.2))
+    _lbl(b, 0.2, 3.9, "CW:45 / CW:90\nstart kolom 1,5\nbelok ke kanan", ROBOT)
+    th2 = np.radians(np.linspace(0, 90, 30))
+    b.plot(6.5, 12, marker="*", ms=13, color=GREEN, mec="black", mew=0.5, zorder=6)
+    b.plot([6.5, 6.5], [12, 13.5], color="#7c3aed", lw=2.2)
+    b.plot(5.5 + np.cos(th2), 13.5 + np.sin(th2), color="#7c3aed", lw=2.2)
+    b.add_patch(FancyArrowPatch((5.5, 14.5), (4.1, 14.5), arrowstyle="-|>", mutation_scale=11,
+                                color="#7c3aed", lw=2.2))
+    _lbl(b, 7.8, 10.9, "CCW:45 / CCW:90\nstart kolom 6,5\nbelok ke kiri", "#7c3aed", ha="right")
+    _lbl(b, 0.2, 18.2, "belok selalu ke arah\nsisi kolam yang lega", INK, size=7)
+
+    _kolam(c, "C1 · Kotak 1 × 2 m")
+    kotak = [(2, 4), (2, 12), (6, 12), (6, 4), (2, 4)]
+    _jalur(c, kotak)
+    _lbl(c, 2.2, 6.5, "1. FW:200", INK)
+    _lbl(c, 4, 12.6, "2. CW:90  3. FW:100", INK, ha="center")
+    _lbl(c, 5.8, 9.5, "4. CW:90\n5. FW:200", INK, ha="right")
+    _lbl(c, 4, 3.4, "6. CW:90  7. FW:100", INK, ha="center")
+    _lbl(c, 2.2, 2.3, "8. CW:90 → kembali ke start", GREEN)
+    _lbl(c, 0.2, 16.5, "start kolom 2 baris 4\n2 m = 8 baris, 1 m = 4 kolom\n"
+         "sisa ke dinding 2 kolom\n(50 cm) kiri & kanan", INK, size=7)
+
+    _kolam(d, "C2 · Zigzag mini 1 × 3 m")
+    zz = [(2, 16), (6, 16), (6, 12), (2, 12), (2, 8), (6, 8), (6, 4), (2, 4)]
+    _jalur(d, zz)
+    for y, t in ((16.6, "FW:100 →"), (12.6, "← FW:100"), (8.6, "FW:100 →"), (4.6, "← FW:100")):
+        _lbl(d, 4, y, t, INK, ha="center")
+    for x, y, t, ha in ((6.2, 14, "CW:90\nFW:100\nCW:90", "left"),
+                        (1.8, 10, "CCW:90\nFW:100\nCCW:90", "right"),
+                        (6.2, 6, "CW:90\nFW:100\nCW:90", "left")):
+        _lbl(d, x, y, t, RED, ha=ha, size=6.6)
+    d.plot(2, 4, marker="X", ms=10, color=GREEN, mec="black", zorder=6)
+    _lbl(d, 2.2, 2.9, "finish: kolom 2 baris 4", GREEN)
+    _lbl(d, 2.2, 18.6, "start: kolom 2 baris 16", GREEN)
+
+    rp, rl = ROBOT_P_CM / KERAMIK_CM, ROBOT_L_CM / KERAMIK_CM
+    for ax, x, y, h in ((a, 4, 2, 90), (b, 1.5, 5, 90), (b, 6.5, 12, 90),
+                        (c, 6, 12, 0), (d, 6, 16, 0)):
+        _robot_k(ax, x, y, h, "#f97316", filled=False, length=rp, width=rl)
+    for ax, y in ((c, 12), (d, 16)):
+        ax.annotate("", xy=(8, y + 1.3), xytext=(6 + rp / 2, y + 1.3),
+                    arrowprops=dict(arrowstyle="<->", color="#c2410c", lw=1.2))
+        _lbl(ax, 7.9, y + 2.0, "sisa ± 20 cm", "#c2410c", ha="right", size=6.8, weight="bold")
+    fig.suptitle("Tata letak skenario di kolam uji 5 × 2 m  "
+                 "(1 kotak = 25 cm; garis oranye = badan robot 60 × 42 cm sesuai skala)",
+                 fontsize=10.5, weight="bold", color=INK, x=0.01, ha="left")
+    return _save(fig, "fig_kolam_skenario.png", rect=[0, 0, 1, 0.96])
+
+
+def fig_hitung():
+    fig, (a, b) = plt.subplots(1, 2, figsize=(11, 4.6))
+    for ax in (a, b):
+        ax.add_patch(Rectangle((0, 0), 6, 5, fc=WATER, ec="none"))
+        for i in range(7):
+            ax.plot([i, i], [0, 5], color="#60a5fa", lw=0.9)
+        for j in range(6):
+            ax.plot([0, 6], [j, j], color="#60a5fa", lw=0.9)
+        ax.set_xlim(-0.2, 6.2)
+        ax.set_ylim(-0.9, 5.2)
+        ax.set_aspect("equal")
+        ax.axis("off")
+    rp, rl = ROBOT_P_CM / KERAMIK_CM, ROBOT_L_CM / KERAMIK_CM
+
+    a.set_title("Hitung JARAK: baca baris titik tengah robot", fontsize=10, weight="bold",
+                color=INK, loc="left")
+    _robot_k(a, 2.5, 1.3, 90, GHOST, filled=False, length=rp, width=rl)
+    _robot_k(a, 2.5, 3.7, 90, ROBOT, length=rp, width=rl)
+    a.plot([2.5, 2.5], [1.3, 3.7], color=GREEN, lw=1.3, ls=":")
+    for y, t in ((1.3, "awal: baris 1,3"), (3.7, "akhir: baris 3,7")):
+        a.plot([2.5, 3.9], [y, y], color=GREEN, lw=0.8, ls=":")
+        _lbl(a, 4.0, y, t, GREEN, weight="bold", size=8.5)
+    _lbl(a, 0.05, -0.5, "jarak = (3,7 − 1,3) × 25 cm = 2,4 × 25 = 60 cm   (perintah FW:50 → galat 10 cm)",
+         INK, size=8.5)
+
+    b.set_title("Hitung SUDUT: baca haluan & buritan di grid", fontsize=10, weight="bold",
+                color=INK, loc="left")
+    hx, hy, bx, by = 5.0, 2.7, 2.6, 2.4
+    _robot_k(b, (hx + bx) / 2, (hy + by) / 2, np.degrees(np.arctan2(hy - by, hx - bx)), ROBOT,
+             length=np.hypot(hx - bx, hy - by), width=rl)
+    b.plot([bx, hx], [by, hy], "o", color="#facc15", mec="black", ms=7, zorder=8)
+    b.plot([bx, hx], [by, by], color=RED, lw=1.2, ls="--", zorder=7)
+    b.plot([hx, hx], [by, hy], color=RED, lw=1.2, ls="--", zorder=7)
+    _lbl(b, bx - 0.2, by - 0.55, "buritan (2,6 ; 2,4)", INK, size=8)
+    _lbl(b, hx - 0.9, hy + 0.65, "haluan (5,0 ; 2,7)", INK, size=8)
+    _lbl(b, (bx + hx) / 2, by - 1.3, "Δ kolom = 2,4", RED, ha="center", size=8)
+    _lbl(b, hx + 0.15, (by + hy) / 2, "Δ baris\n= 0,3", RED, size=8)
+    _lbl(b, 0.05, 4.6, "start menghadap sepanjang baris (0°). Setelah CW:90 robot idealnya\n"
+         "melintang searah kolom. Arah robot dari garis baris:", INK, size=8)
+    _lbl(b, 0.05, -0.5, "arah = atan(Δ kolom ÷ Δ baris) = atan(2,4 ÷ 0,3) = 82,9°  →  galat = 7,1°",
+         INK, size=8.5)
+    fig.tight_layout()
+    return _save(fig, "fig_hitung_keramik.png")
+
+
+def _robot_k(ax, x, y, heading_deg, color, filled=True, length=1.6, width=0.9):
+    t = np.radians(heading_deg)
+    fwd = np.array([np.cos(t), np.sin(t)])
+    side = np.array([-np.sin(t), np.cos(t)])
+    c = np.array([x, y])
+    L, W = length, width
+    pts = [c + fwd * L * 0.3 + side * W / 2, c + fwd * L / 2, c + fwd * L * 0.3 - side * W / 2,
+           c - fwd * L / 2 - side * W / 2, c - fwd * L / 2 + side * W / 2]
+    ax.add_patch(Polygon(pts, closed=True, fc=color if filled else "none", ec=color, lw=1.6,
+                         ls="-" if filled else "--", alpha=0.85 if filled else 1, zorder=5))
+    ax.add_patch(Circle(c, 0.07, fc="white", ec=INK, lw=0.8, zorder=6))
 
 
 # =====================================================================
@@ -272,7 +237,7 @@ class Doc:
         sec.left_margin = sec.right_margin = Cm(2.3)
         sec.top_margin, sec.bottom_margin = Cm(2.2), Cm(2.0)
         hp = sec.header.paragraphs[0]
-        hr = hp.add_run("Rancangan Skenario Pengujian Gerak Robot Akuatik  |  Draf untuk persetujuan")
+        hr = hp.add_run("Rancangan Skenario Pengujian Gerak Robot Akuatik")
         hr.font.size = Pt(8.5)
         hr.font.color.rgb = RGBColor(0x64, 0x74, 0x8B)
         hp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
@@ -500,35 +465,33 @@ def build(fig):
     info.alignment = WD_TABLE_ALIGNMENT.CENTER
     for i, (k, v) in enumerate((
             ("Disusun oleh", "Samuel Alfonsus"),
-            ("Diajukan kepada", "Bapak Dany Eka Saputra (Dosen Pembimbing)"),
-            ("Status", "Draf — diajukan untuk persetujuan sebelum pengujian di kolam"),
+            ("Dosen Pembimbing", "Bapak Dany Eka Saputra"),
+            ("Status", "Revisi sesuai masukan dosen pembimbing (alat ukur fisik, kolam uji 5 × 2 m)"),
             ("Tanggal", "September 2026"))):
         D.cell(info.rows[i].cells[0], k, bold=True, size=10.5)
         D.cell(info.rows[i].cells[1], ": " + v, size=10.5)
-        info.rows[i].cells[0].width = Cm(3.6)
-        info.rows[i].cells[1].width = Cm(11.5)
+        info.rows[i].cells[0].width = Cm(3.8)
+        info.rows[i].cells[1].width = Cm(11.8)
     d.add_paragraph()
 
     # ---------------- ringkasan ----------------
     D.h1("Ringkasan")
-    D.p("Tabel berikut menjawab empat hal yang diminta untuk skenario uji. Rinciannya ada pada "
-        "bagian-bagian selanjutnya.")
     D.table(["Pertanyaan", "Jawaban singkat"], [
         ["Gerakan apa yang diuji?",
-         "Tiga kelompok: (A) maju lurus, (B) belok kanan dan kiri 45° dan 90°, "
-         "(C) kombinasi — lintasan kotak 1 × 2 m dan misi zigzag mini 2 × 3 m. Total 9 skenario."],
+         "Tiga kelompok: (A) maju lurus, (B) belok kanan dan kiri 45° dan 90°, (C) kombinasi — "
+         "lintasan kotak 1 × 2 m dan misi zigzag mini. Total 9 skenario."],
         ["Jaraknya berapa?",
          "Lurus 50, 100, dan 200 cm; belok 45° dan 90°; kotak 1 × 2 m (keliling 6 m); zigzag "
-         "tambak 2 × 3 m dengan lebar lintasan 1 m (4 lintasan, total 11 m). Semua masih di "
-         "dalam batas perintah robot (FW 10–200 cm, CW/CCW 1–180°)."],
+         "4 lintasan × 1 m dengan jarak antar-lintasan 1 m (total 7 m). Semua muat di kolam uji "
+         "5 × 2 m dan masih di dalam batas perintah robot (FW 10–200 cm, CW/CCW 1–180°)."],
         ["Berapa kali pengulangan?",
-         "Setiap skenario diulang 5 kali (5 data valid), sehingga total 45 percobaan."],
+         "Setiap skenario diulang 5 kali (5 data valid), total 45 percobaan."],
         ["Bagaimana cara mengukurnya?",
-         "Dengan alat ukur fisik, bukan hasil hitungan software: meteran untuk jarak, kompas "
-         "untuk sudut. Tepi kolam dipakai sebagai garis lurus acuan. Jarak diukur dengan meteran "
-         "di sepanjang tepi kolam; sudut dibaca langsung dari kompas sebelum dan sesudah belok. "
-         "Hasil ukur dibandingkan dengan perintah dan dengan pembacaan MPU di log GUI, lalu "
-         "dihitung galat, akurasi, dan simpangan bakunya."],
+         "Dengan grid keramik lantai kolam (25 × 25 cm) sebagai alat ukur posisi, seperti area "
+         "uji bergrid pada [1]. Posisi titik tengah, haluan, dan buritan robot dibaca langsung "
+         "dalam koordinat keramik; jarak dan sudut aktual diturunkan dari bacaan itu, lalu "
+         "dibandingkan dengan perintah dan pembacaan MPU memakai MAE dan MAPE seperti pada [1], "
+         "[2]. Tidak perlu membeli alat — meteran hanya dipakai untuk memverifikasi ukuran keramik."],
     ], [4.2, 12.2], size=10)
 
     # ---------------- 1 ----------------
@@ -538,7 +501,7 @@ def build(fig):
         "menyelesaikan perintah menurut perhitungannya sendiri; FIN belum membuktikan bahwa robot "
         "benar-benar bergerak sejauh atau berbelok sebesar yang diperintahkan. Hal ini penting "
         "terutama untuk perintah maju (FW), karena jaraknya diturunkan dari waktu tempuh dan tidak "
-        "diukur oleh sensor, sehingga jarak nyata dapat berbeda akibat hambatan air, angin, dan "
+        "diukur oleh sensor, sehingga jarak nyata dapat berbeda akibat hambatan air, inersia, dan "
         "kondisi baterai.")
     D.p("Tujuan pengujian:")
     D.bullet("mengukur kesesuaian jarak tempuh aktual dengan perintah maju (FW);")
@@ -551,7 +514,9 @@ def build(fig):
 
     # ---------------- 2 ----------------
     D.h1("2. Karakteristik Robot yang Memengaruhi Rancangan Uji")
-    D.table(["Aspek", "Cara kerja pada robot", "Akibat pada pengujian"], [
+    D.table(["Aspek", "Kondisi pada robot", "Akibat pada pengujian"], [
+        ["Ukuran badan", "Panjang 60 cm (2,4 keramik), lebar 42 cm (1,7 keramik).",
+         "Posisi start diatur agar badan robot tidak menyentuh dinding kolam 2 m."],
         ["Perintah maju FW:<10–200 cm>",
          "Durasi = jarak ÷ kecepatan jelajah (ROBOT_SPEED_MPS = 0,5 m/s); arah dijaga "
          "heading-hold MPU.",
@@ -562,266 +527,295 @@ def build(fig):
         ["Mekanisme belok",
          "Differential thrust: satu motor dimatikan (CW = motor kiri jalan, CCW = motor kanan "
          "jalan).",
-         "Robot berbelok melingkar, bukan di tempat. Robot diposisikan agar belok menjauhi tepi "
-         "kolam; belok kanan dan kiri diuji terpisah."],
-        ["Inersia di air",
-         "Setelah motor berhenti, robot masih meluncur atau berputar sedikit.",
-         "Pengukuran dilakukan setelah robot benar-benar diam, bukan saat FIN diterima."],
-    ], [3.6, 6.4, 6.4])
+         "Robot berbelok melingkar, bukan di tempat; posisinya ikut bergeser. Belok kanan dan "
+         "kiri diuji terpisah."],
+        ["Inersia (Hukum I Newton)",
+         "ESC hanya satu arah, sehingga robot tidak bisa mengerem; setelah baling-baling berhenti "
+         "robot masih meluncur atau berputar sedikit.",
+         "Posisi akhir diukur setelah robot diam. Posisi saat FIN dapat dicatat untuk menghitung "
+         "jarak luncur (bagian 7.6)."],
+    ], [3.4, 6.5, 6.5])
 
     # ---------------- 3 ----------------
-    D.h1("3. Variabel Pengujian")
+    D.h1("3. Lokasi dan Sistem Koordinat")
+    D.p("Pengujian dilakukan di kolam berukuran 5 × 2 m dengan lantai keramik 25 × 25 cm, yaitu "
+        "8 keramik melintang dan 20 keramik memanjang. Grid keramik ini dipakai sebagai sistem "
+        "koordinat sekaligus alat ukur posisi, serupa dengan area uji bergrid dan titik waypoint "
+        "yang posisinya sudah pasti pada [1].")
+    D.table(["Sumbu", "Arah", "Rentang", "Satuan"], [
+        ["Kolom", "melintang (lebar kolam)", "0 – 8", "1 kolom = 25 cm"],
+        ["Baris", "memanjang (panjang kolam)", "0 – 20", "1 baris = 25 cm"],
+    ], [3.0, 5.4, 3.0, 5.0], size=10)
+    D.p("Posisi ditulis sebagai (kolom ; baris), dibaca sampai 0,1 keramik (2,5 cm) dengan bantuan "
+        "kotak mozaik kecil di dalam tiap keramik. Titik (0 ; 0) adalah pojok kolam yang dipilih "
+        "sebagai acuan dan dipakai tetap selama seluruh pengujian.")
+    D.figure(fig["kolam"], "Gambar 1. Tata letak skenario di kolam uji. Garis oranye menunjukkan "
+             "badan robot 60 × 42 cm sesuai skala.", 16.4)
+
+    # ---------------- 4 ----------------
+    D.h1("4. Variabel Pengujian")
     D.table(["Jenis variabel", "Isi"], [
         ["Variabel bebas (yang diubah)",
          "Jenis gerakan dan besar perintah (jarak dalam cm, sudut dalam derajat)."],
         ["Variabel terikat (yang diukur)",
-         "Jarak aktual, penyimpangan lateral, sudut aktual, galat titik akhir/penutupan, dan "
+         "Jarak aktual, penyimpangan lateral, jarak luncur, sudut aktual, galat posisi akhir, dan "
          "keberhasilan eksekusi perintah."],
         ["Variabel kontrol (dijaga tetap)",
-         "CRUISE_PWM 1300 µs; konstanta firmware tidak diubah selama pengujian resmi; baterai "
-         "terisi penuh di awal sesi; lokasi dan titik start sama; status MPU sehat (S = 1); GUI "
-         "pada mode REAL."],
-        ["Kondisi yang dicatat",
-         "Angin (tenang/sedang/kencang), riak atau arus air, jam mulai (lama pemakaian baterai)."],
+         "Kolam dan titik start yang sama; CRUISE_PWM 1300 µs; konstanta firmware tidak diubah "
+         "selama pengujian resmi; baterai terisi penuh di awal sesi; status MPU sehat (S = 1); "
+         "GUI pada mode REAL."],
+        ["Kondisi yang dicatat", "Angin, riak air, dan jam mulai (lama pemakaian baterai)."],
     ], [4.6, 11.8], size=10)
 
-    # ---------------- 4 ----------------
-    D.h1("4. Skenario Pengujian")
-    D.p("Sembilan skenario dibagi menjadi tiga kelompok. Semua perintah dikirim dari GUI "
-        "Pengendali Utama pada mode REAL.")
-    zig = ("Dari halaman MISI (antrean otomatis, 13 perintah): FW:200 → CW:90 → FW:100 → CW:90 → "
-           "FW:200 → CCW:90 → FW:100 → CCW:90 → FW:200 → CW:90 → FW:100 → CW:90 → FW:200")
-    t = D.table(["Kode", "Gerakan", "Perintah dari GUI", "Target", "Ulang", "Data yang diukur"], [
-        ["A1", "Maju lurus 50 cm", "FW:50", "50 cm", "5×", "Jarak aktual, penyimpangan lateral"],
-        ["A2", "Maju lurus 100 cm", "FW:100", "100 cm", "5×", "Jarak aktual, penyimpangan lateral"],
-        ["A3", "Maju lurus 200 cm", "FW:200", "200 cm", "5×", "Jarak aktual, penyimpangan lateral"],
-        ["B1", "Belok kanan 45°", "CW:45", "45°", "5×", "Sudut aktual, sudut MPU"],
-        ["B2", "Belok kanan 90°", "CW:90", "90°", "5×", "Sudut aktual, sudut MPU"],
-        ["B3", "Belok kiri 45°", "CCW:45", "45°", "5×", "Sudut aktual, sudut MPU"],
-        ["B4", "Belok kiri 90°", "CCW:90", "90°", "5×", "Sudut aktual, sudut MPU"],
+    # ---------------- 5 ----------------
+    D.h1("5. Skenario Pengujian")
+    D.p("Semua perintah dikirim dari GUI Pengendali Utama pada mode REAL. Posisi start dan target "
+        "ditulis dalam koordinat keramik (kolom ; baris); lihat Gambar 1.")
+    zig = ("Dari halaman MISI (13 perintah): FW:100 → CW:90 → FW:100 → CW:90 → FW:100 → CCW:90 → "
+           "FW:100 → CCW:90 → FW:100 → CW:90 → FW:100 → CW:90 → FW:100")
+    t = D.table(["Kode", "Gerakan", "Perintah dari GUI", "Start", "Target", "Ulang"], [
+        ["A1", "Maju lurus 50 cm", "FW:50", "(4 ; 2), menghadap sepanjang baris", "baris 4", "5×"],
+        ["A2", "Maju lurus 100 cm", "FW:100", "(4 ; 2)", "baris 6", "5×"],
+        ["A3", "Maju lurus 200 cm", "FW:200", "(4 ; 2)", "baris 10", "5×"],
+        ["B1", "Belok kanan 45°", "CW:45", "(1,5 ; 5), menghadap sepanjang baris", "arah 45° kanan", "5×"],
+        ["B2", "Belok kanan 90°", "CW:90", "(1,5 ; 5)", "arah 90° kanan", "5×"],
+        ["B3", "Belok kiri 45°", "CCW:45", "(6,5 ; 12), menghadap sepanjang baris", "arah 45° kiri", "5×"],
+        ["B4", "Belok kiri 90°", "CCW:90", "(6,5 ; 12)", "arah 90° kiri", "5×"],
         ["C1", "Lintasan kotak 1 × 2 m (4 × belok kanan)",
-         "FW:100 → CW:90 → FW:200 → CW:90 → FW:100 → CW:90 → FW:200 → CW:90",
-         "Kembali ke titik start dengan arah semula", "5×",
-         "Galat penutupan, galat arah akhir, jumlah FIN"],
-        ["C2", "Misi zigzag mini: tambak 2 × 3 m, lebar lintasan 1 m", zig,
-         "Titik akhir 3 m dari start di sepanjang tepi", "5×",
-         "Galat titik akhir, jumlah FIN, waktu total"],
+         "FW:200 → CW:90 → FW:100 → CW:90 → FW:200 → CW:90 → FW:100 → CW:90",
+         "(2 ; 4), menghadap sepanjang baris", "kembali ke (2 ; 4), arah semula", "5×"],
+        ["C2", "Misi zigzag mini: 4 lintasan melintang 1 m, jarak antar-lintasan 1 m", zig,
+         "(2 ; 16), menghadap melintang ke kolom 6", "(2 ; 4)", "5×"],
         ["", "", "", "", "", ""],
-    ], [1.1, 3.1, 4.6, 2.8, 1.1, 3.7], size=9, center=(0, 3, 4))
+    ], [1.1, 3.2, 4.6, 3.6, 2.8, 1.1], size=9, center=(0, 5))
     last = t.rows[-1]
     merged = last.cells[0].merge(last.cells[5])
     D.cell(merged, "Total: 9 skenario × 5 pengulangan = 45 percobaan valid", bold=True,
            size=9.5, align=CENTER)
     D.shade(merged, "DCE6F0")
 
-    D.figure(fig["kombinasi"], "Gambar 1. Lintasan rencana skenario kombinasi C1 (kotak) dan "
-             "C2 (zigzag mini) terhadap tepi kolam", 15.0)
-
     D.h2("Alasan pemilihan skenario")
     D.bullet(" mewakili jarak pendek, sedang, dan maksimum satu perintah FW. Lintasan panjang pada "
-             "misi selalu dipecah aplikasi menjadi potongan ≤ 200 cm, jadi ketiga jarak ini "
-             "mencakup semua potongan yang dipakai.", "Lurus 50/100/200 cm —")
-    D.bullet(" 90° dipakai pada setiap belokan misi zigzag, sedangkan 45° menguji sudut kecil. "
-             "Kanan dan kiri diuji terpisah karena memakai motor yang berbeda.",
-             "Belok 45° dan 90°, kanan dan kiri —")
-    D.bullet(" lintasan tertutup. Bila semua gerakan tepat, robot kembali ke titik start dengan "
-             "arah semula, sehingga kesalahan yang menumpuk mudah terlihat dan cukup diukur di "
-             "satu titik. Karena keempat belokannya sama, pergeseran akibat belok melingkar saling "
-             "meniadakan; robot yang ideal tetap kembali ke start.", "Kotak 1 × 2 m —")
-    D.bullet(" pola yang benar-benar dipakai robot untuk menebar pakan, diambil langsung dari "
-             "perencana jalur aplikasi. Empat lintasan dipilih agar robot berakhir di sisi tepi "
-             "yang sama dengan start, sehingga posisi akhirnya bisa diukur dengan meteran dari "
-             "tepi.", "Zigzag mini 2 × 3 m —")
-    D.bullet(" jumlah minimum agar rata-rata dan simpangan baku bermakna. Dapat ditambah menjadi "
+             "misi selalu dipecah aplikasi menjadi potongan ≤ 200 cm. Robot maju di tengah lebar "
+             "kolam (kolom 4) agar jauh dari kedua dinding.", "Lurus 50/100/200 cm —")
+    D.bullet(" 90° dipakai pada setiap belokan misi, 45° menguji sudut kecil. Kanan dan kiri diuji "
+             "terpisah karena memakai motor berbeda; posisi start dipilih agar robot berbelok ke "
+             "sisi kolam yang lega.", "Belok 45° dan 90°, kanan dan kiri —")
+    D.bullet(" sesuai contoh dosen pembimbing. Lintasan tertutup: bila semua gerakan tepat, robot "
+             "kembali ke titik start dengan arah semula, sehingga kesalahan yang menumpuk terlihat "
+             "di satu titik.", "Kotak 1 × 2 m —")
+    D.bullet(" pola sapuan boustrophedon yang dipakai robot untuk menebar pakan, dihasilkan "
+             "langsung oleh perencana jalur aplikasi dan diperkecil agar muat di kolam uji.",
+             "Zigzag mini —")
+    D.bullet(" jumlah minimum agar rata-rata dan simpangan baku bermakna; dapat ditambah menjadi "
              "10 kali bila waktu memungkinkan.", "Pengulangan 5 kali —")
-
-    # ---------------- 5 ----------------
-    D.h1("5. Alat")
-    D.p("Semua pengukuran memakai alat ukur fisik — hasil bacaan langsung dari alat, bukan nilai "
-        "yang dihitung oleh program dari foto atau data robot:")
-    D.table(["No", "Alat", "Fungsi"], [
-        ["1", "Meteran gulung (≥ 3 m)",
-         "Mengukur jarak di sepanjang tepi kolam dan jarak robot ke tepi (skenario A, C)"],
-        ["2", "Kompas orientasi/bidik kecil",
-         "Membaca arah hadap robot (azimuth) sebelum dan sesudah belok (skenario B, C)"],
-        ["3", "HP", "Stopwatch dan dokumentasi foto (bukti pelaksanaan, bukan sumber data sudut)"],
-        ["4", "Raspberry Pi + GUI (bagian dari sistem)",
-         "Mengirim perintah; mencatat waktu ON/FIN dan yaw MPU secara otomatis"],
-    ], [1.0, 6.4, 9.0], size=10, center=(0,))
-    D.p("Dari lokasi hanya dimanfaatkan tepi kolam yang lurus sebagai garis acuan 0°, dan benda "
-        "apa saja (batu, sandal, kapur, selotip) sebagai tanda titik di tepi kolam. Hasil dicatat "
-        "di lembar data (Lampiran) atau langsung di HP.")
-    D.note("pengukuran dengan meteran dan kompas tetap diperlukan dan tidak bisa diganti data "
-           "robot. Sinyal FIN dan sensor MPU berasal dari robot sendiri, sehingga tidak dapat "
-           "membuktikan bahwa robot benar-benar bergerak sesuai perintah — itulah yang ingin "
-           "dibuktikan oleh pengujian ini. Perhitungan sudut dari foto (skrip di laptop) juga "
-           "tidak dipakai sebagai data resmi karena statusnya sama seperti yang sedang diuji: "
-           "hasil olahan, bukan pembanding independen.", lead="Mengapa harus alat ukur fisik: ")
+    D.note("dengan robot 60 cm, ujung depan robot hanya berjarak sekitar 20 cm dari dinding saat "
+           "menghadap melintang di C1 dan C2. Karena itu ukuran melintang C1 dan C2 ditetapkan "
+           "setelah uji coba ruang pada tahap pendahuluan (bagian 10.1).", lead="Catatan ruang: ")
 
     # ---------------- 6 ----------------
-    D.h1("6. Metode Pengukuran")
-    D.h2("6.1 Prinsip: tiga nilai untuk setiap percobaan")
+    D.h1("6. Alat")
+    D.p("Tidak ada alat yang perlu dibeli. Posisi dibaca langsung dari grid fisik lantai kolam — "
+        "bukan nilai yang dihitung program dari foto atau data robot.")
+    D.table(["No", "Alat", "Fungsi"], [
+        ["1", "Lantai kolam berkeramik 25 × 25 cm",
+         "Alat ukur posisi utama (grid koordinat kolom ; baris)"],
+        ["2", "Meteran", "Memverifikasi ukuran keramik dan mozaik sekali di awal"],
+        ["3", "HP", "Stopwatch; foto tegak dari atas sebagai bantu baca bila titik jauh dari tepi "
+                    "(angka tetap dibaca dari grid pada foto, tidak dihitung program)"],
+        ["4", "Raspberry Pi + GUI (bagian dari sistem)",
+         "Mengirim perintah; mencatat waktu ON/FIN dan yaw MPU secara otomatis"],
+        ["5", "Lembar data (Lampiran), alat tulis", "Pencatatan hasil tiap percobaan"],
+    ], [1.0, 5.8, 9.6], size=10, center=(0,))
+    D.note("sinyal FIN dan sensor MPU berasal dari robot sendiri, sehingga tidak dapat membuktikan "
+           "bahwa robot benar-benar bergerak sesuai perintah. Nilai aktual harus diambil dari "
+           "acuan fisik di luar robot, sebagaimana posisi nyata pada [1] dan jarak nyata pada [2].",
+           lead="Mengapa acuan fisik: ")
+
+    # ---------------- 7 ----------------
+    D.h1("7. Metode Pengukuran")
+    D.h2("7.1 Prinsip: tiga nilai untuk setiap percobaan")
     D.table(["Nilai", "Sumber", "Fungsi"], [
         ["Perintah (target)", "Yang dikirim dari GUI, mis. FW:100", "Acuan pembanding"],
         ["Menurut sistem robot", "Sinyal FIN dan yaw MPU di log GUI",
          "Menunjukkan apa yang “dikira” robot"],
-        ["Aktual", "Diukur dari luar robot dengan alat fisik: meteran dan kompas",
-         "Kebenaran lapangan, dasar penilaian"],
+        ["Aktual", "Posisi robot dibaca dari grid keramik", "Kebenaran lapangan, dasar penilaian"],
     ], [4.0, 6.4, 6.0], size=10)
-    D.p("Keberhasilan gerak dinilai dari selisih nilai aktual terhadap perintah. Nilai MPU tidak "
-        "dipakai sebagai nilai aktual karena berasal dari sensor robot sendiri; nilai itu justru "
-        "dibandingkan dengan nilai aktual untuk menilai ketelitian sensornya.")
 
-    D.h2("6.2 Garis acuan dan titik acuan")
-    D.p("Tepi kolam yang lurus dipakai sebagai garis acuan (arah 0°). Titik tengah robot dipakai "
-        "sebagai titik acuan semua pengukuran jarak, dan arah hadap robot adalah garis tengah "
-        "badan robot dari buritan ke haluan.")
+    D.h2("7.2 Cara membaca posisi")
+    D.bullet(" titik tengah badan robot (untuk jarak dan posisi akhir).", "Titik acuan —")
+    D.bullet(" ujung depan dan ujung belakang robot (untuk arah hadap). Jaraknya 60 cm = 2,4 "
+             "keramik.", "Haluan dan buritan —")
+    D.bullet(" lihat tegak lurus dari atas titik yang dibaca. Melihat miring melalui air membuat "
+             "posisi tampak bergeser (paralaks dan pembiasan). Bila titik jauh dari tepi, ambil "
+             "foto HP tegak dari atas lalu baca keramiknya pada foto.", "Cara melihat —")
+    D.figure(fig["hitung"], "Gambar 2. Contoh membaca jarak dan sudut dari grid keramik", 16.0)
 
-    D.h2("6.3 Pengukuran gerak lurus (A1–A3)")
-    D.figure(fig["lurus"], "Gambar 2. Pengukuran gerak lurus dengan meteran di sepanjang tepi kolam",
-             15.5)
+    D.h2("7.3 Gerak lurus (A1–A3)")
     D.steps([
-        "Letakkan robot sejajar tepi kolam, ± 30 cm dari tepi. Beri tanda di tepi kolam yang "
-        "segaris dengan titik tengah robot (tanda start).",
-        "Kirim perintah. Setelah FIN diterima, tunggu hingga robot benar-benar diam (± 3 detik).",
-        "Beri tanda kedua di tepi kolam yang segaris tegak lurus dengan titik tengah robot.",
-        ("Jarak aktual (d aktual) ", "= jarak antara dua tanda, diukur dengan meteran di "
-         "sepanjang tepi."),
-        ("Penyimpangan lateral (e lateral) ", "= jarak titik tengah robot ke tepi (meteran) "
-         "dikurangi 30 cm; positif bila menjauhi tepi."),
+        "Letakkan titik tengah robot di (4 ; 2), menghadap sepanjang baris (sejajar garis keramik).",
+        "Kirim perintah. Bila memungkinkan, catat baris titik tengah robot saat FIN muncul di GUI.",
+        "Tunggu hingga robot benar-benar diam (± 3 detik), lalu baca posisi titik tengah (kolom ; baris).",
+        ("Jarak aktual ", "= (baris akhir − 2) × 25 cm."),
+        ("Penyimpangan lateral ", "= (kolom akhir − 4) × 25 cm; positif bila ke kanan."),
     ])
-    D.note("tanda kedua dibidik dengan mata, sehingga ketelitian bacaan sekitar ± 3 cm. Nilai "
-           "ini perlu diperhitungkan terutama pada A1 (50 cm).")
 
-    D.h2("6.4 Pengukuran belok (B1–B4)")
-    D.figure(fig["belok"], "Gambar 3. Pengukuran sudut belok dengan kompas", 15.5)
+    D.h2("7.4 Belok (B1–B4)")
     D.steps([
-        "Letakkan robot sejajar tepi kolam. Untuk CW, tepi kolam berada di sisi kiri robot; untuk "
-        "CCW, di sisi kanan, sehingga robot selalu berbelok menjauhi tepi.",
-        ("Azimuth awal ", "= bacaan kompas saat ditempelkan sejajar sumbu buritan→haluan robot, "
-         "dicatat sebelum perintah dikirim. Catat juga yaw MPU awal dari GUI."),
-        "Kirim perintah. Setelah FIN diterima dan robot berhenti berputar, tunggu hingga benar-"
-        "benar diam.",
-        ("Azimuth akhir ", "= bacaan kompas dengan cara yang sama, di posisi robot yang baru. "
-         "Catat juga yaw MPU akhir dari GUI."),
-        ("Sudut aktual ", "= |azimuth akhir − azimuth awal| (dikoreksi ke rentang 0–180° bila "
-         "melewati 0°/360°)."),
-        ("Sudut MPU ", "= yaw akhir − yaw awal dari log GUI."),
+        "Letakkan robot di posisi start (B1–B2 di (1,5 ; 5), B3–B4 di (6,5 ; 12)), menghadap "
+        "sepanjang baris. Catat yaw MPU awal dari GUI.",
+        "Kirim perintah. Setelah FIN diterima, tunggu hingga robot berhenti berputar.",
+        "Baca posisi haluan dan buritan (kolom ; baris). Catat yaw MPU akhir.",
+        ("Arah robot ", "= atan(Δ kolom ÷ Δ baris), dengan Δ = haluan − buritan. Bila haluan "
+         "berada di baris yang lebih kecil daripada buritan (robot berbelok melewati 90°), arah = "
+         "180° − atan(|Δ kolom| ÷ |Δ baris|)."),
+        ("Sudut aktual ", "= arah robot (karena arah awal 0°); galat = |sudut aktual − sudut "
+         "perintah|."),
+        ("Sudut MPU ", "= |yaw akhir − yaw awal| dari log GUI."),
     ])
-    D.note("tempelkan kompas kira-kira 20 cm dari ESC/motor — medan magnet motor dapat "
-           "mengganggu bacaan. Foto sebelum/sesudah tetap boleh diambil sebagai dokumentasi "
-           "pelaksanaan, tetapi bukan sumber angka sudut aktual.")
+    D.p("Untuk B2 dan B4 (90°), robot akhirnya hampir melintang, sehingga Δ kolom ≈ 2,4 dan "
+        "galat cukup dibaca dari Δ baris memakai tabel berikut:")
+    rows = []
+    for db in (0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.8, 1.0, 1.2):
+        miring = np.degrees(np.arctan(db / 2.4))
+        rows.append([f"{db:.1f}".replace(".", ","), f"{db * 25:.1f}".replace(".", ","),
+                     f"{miring:.1f}".replace(".", ",")])
+    D.table(["Δ baris haluan–buritan (keramik)", "Δ baris (cm)", "Miring dari 90° (°)"], rows,
+            [5.6, 4.0, 5.0], size=9.5, center=(0, 1, 2))
+    D.note("dengan robot 2,4 keramik, salah baca 0,1 keramik (2,5 cm) menggeser sudut sekitar "
+           "2,4°. Karena itu posisi haluan dan buritan perlu dibaca sampai 0,1 keramik dengan "
+           "bantuan mozaik kecil.", lead="Ketelitian: ")
 
-    D.h2("6.5 Pengukuran kombinasi (C1–C2)")
+    D.h2("7.5 Kombinasi (C1–C2)")
     D.p("C1 — Kotak 1 × 2 m", bold=True, after=2)
     D.steps([
-        "Robot sejajar tepi kolam dengan tepi di sisi kiri robot, ± 30 cm dari tepi. Beri tanda "
-        "start di tepi dan catat azimuth awal dengan kompas.",
+        "Letakkan titik tengah robot di (2 ; 4), menghadap sepanjang baris.",
         "Kirim delapan perintah berurutan dari halaman MANUAL sesuai tabel skenario; perintah "
         "berikutnya dikirim setelah FIN perintah sebelumnya diterima.",
-        ("Galat penutupan ", "= jarak lurus titik tengah robot ke titik start setelah robot diam: "
-         "ukur pergeseran di sepanjang tepi (Δx) dan selisih jarak ke tepi terhadap 30 cm (Δy)."),
-        ("Galat arah akhir ", "= |azimuth akhir − azimuth awal| dibaca kompas di posisi akhir "
-         "(ideal 0°, karena total belokan 360°)."),
+        ("Galat penutupan ", "= √(Δ kolom² + Δ baris²) × 25 cm, dengan Δ = posisi akhir − (2 ; 4)."),
+        ("Galat arah akhir ", "= arah robot dari haluan–buritan (ideal 0°, karena total belokan 360°)."),
     ])
     D.p("C2 — Misi zigzag mini", bold=True, after=2)
     D.steps([
-        "Di halaman MISI masukkan panjang 2 m, lebar 3 m, lebar lintasan 1 m, titik awal "
+        "Di halaman MISI masukkan panjang 1 m, lebar 3 m, lebar lintasan 1 m, titik awal "
         "kiri-bawah. Pastikan preview menghasilkan 13 perintah seperti pada tabel skenario.",
-        "Robot menghadap tegak lurus menjauhi tepi, ± 50 cm dari tepi. Beri tanda start di tepi, "
-        "lalu tanda titik akhir rencana 3 m dari tanda start di sepanjang tepi (arah belokan "
-        "pertama).",
-        "Jalankan misi. Setelah robot diam, ukur pergeseran di sepanjang tepi terhadap tanda "
-        "titik akhir (Δx) dan selisih jarak robot ke tepi terhadap 50 cm (Δy).",
+        "Letakkan titik tengah robot di (2 ; 16), menghadap melintang ke arah kolom 6.",
+        "Jalankan misi. Setelah robot diam, baca posisi titik tengah.",
+        ("Galat titik akhir ", "= √(Δ kolom² + Δ baris²) × 25 cm, dengan Δ = posisi akhir − (2 ; 4)."),
         "Dari log GUI, catat jumlah perintah yang selesai (FIN), kirim ulang, dan waktu total "
-        "(estimasi aplikasi 31 detik).",
+        "(estimasi aplikasi 23 detik).",
     ])
-    D.note("karena robot berbelok melingkar, jarak antar-lintasan aktual berpotensi lebih lebar "
-           "dari rencana. Hal ini akan terlihat sebagai titik akhir yang bergeser lebih jauh di "
-           "sepanjang tepi (Δx positif), dan dapat dipakai untuk mengevaluasi perencana jalur.")
 
-    # ---------------- 7 ----------------
-    D.h1("7. Pengolahan Data")
-    D.table(["Besaran", "Rumus", "Keterangan"], [
-        ["Galat absolut", "e = | x aktual − x perintah |", "Dalam cm atau derajat"],
-        ["Galat relatif", "e% = | x aktual − x perintah | ÷ x perintah × 100%", "Dalam persen"],
-        ["Akurasi", "A = 100% − e%", "Semakin tinggi semakin tepat"],
-        ["Rata-rata", "x̄ = (x1 + x2 + … + xn) ÷ n", "n = 5 percobaan"],
-        ["Simpangan baku", "s = √[ Σ (xi − x̄)² ÷ (n − 1) ]",
-         "Keterulangan (presisi): semakin kecil semakin konsisten"],
-        ["Galat titik akhir / penutupan (C1, C2)", "e = √( Δx² + Δy² )",
-         "Jarak posisi akhir robot ke titik rencana"],
-        ["Galat sensor MPU", "e MPU = | θ MPU − θ aktual |", "Ketelitian sensor MPU"],
-        ["Keberhasilan eksekusi",
-         "(percobaan dengan semua perintah FIN ÷ jumlah percobaan) × 100%",
-         "Keandalan komunikasi dan eksekusi"],
-    ], [3.6, 7.6, 5.2])
-    D.p("Contoh: perintah FW:100 dan jarak aktual 92 cm → e = 8 cm, e% = 8%, akurasi = 92%.",
-        italic=True)
-    D.p("Hasil setiap skenario disajikan dalam tabel 5 percobaan beserta rata-rata, simpangan "
-        "baku, dan akurasi, lalu dirangkum dalam grafik perbandingan nilai perintah dan nilai "
-        "aktual.")
+    D.h2("7.6 Jarak luncur (inersia)")
+    D.p("Setelah baling-baling berhenti, robot masih meluncur karena inersia dan tidak dapat "
+        "mengerem karena ESC hanya satu arah. Posisi resmi selalu diambil setelah robot diam, "
+        "karena itulah posisi nyata robot di tambak. Pada skenario A, baris saat FIN juga dicatat "
+        "bila memungkinkan, sehingga:")
+    D.bullet(" = (baris akhir − baris saat FIN) × 25 cm.", "Jarak luncur")
+    D.p("Data ini memisahkan dua sumber galat: kalibrasi kecepatan (robot bergerak terlalu jauh "
+        "atau kurang selama motor menyala) dan efek meluncur. Bila jarak luncur rata-rata "
+        "konsisten, firmware dapat mematikan motor lebih awal sejauh nilai tersebut, lalu "
+        "diuji ulang.")
 
     # ---------------- 8 ----------------
-    D.h1("8. Kriteria Keberhasilan (Usulan)")
-    D.table(["Skenario", "Parameter", "Batas usulan"], [
-        ["A1–A3", "Galat jarak rata-rata", "≤ 10% dari jarak perintah"],
-        ["A1–A3", "Penyimpangan lateral rata-rata", "≤ 10% dari jarak perintah"],
-        ["B1–B4", "Galat sudut rata-rata", "≤ 5°"],
-        ["B1–B4", "Galat sensor MPU terhadap sudut aktual", "≤ 5°"],
-        ["C1", "Galat penutupan", "≤ 30 cm (± 5% dari keliling 6 m)"],
-        ["C1", "Galat arah akhir", "≤ 10°"],
-        ["C2", "Galat titik akhir", "≤ 55 cm (± 5% dari lintasan 11 m)"],
-        ["C1, C2", "Keberhasilan eksekusi", "100% perintah selesai (FIN)"],
-    ], [2.6, 7.2, 6.6], size=10, center=(0,))
-    D.note("batas di atas masih usulan dan menunggu persetujuan Bapak. Bila suatu kriteria tidak "
-           "tercapai, penyebabnya dianalisis (mis. angin, kalibrasi kecepatan, gain heading) dan "
-           "dilaporkan sebagai temuan pengujian.")
+    D.h1("8. Pengolahan Data")
+    D.p("Metrik mengikuti [1] dan [2]: Mean Absolute Error (MAE) dan Mean Absolute Percentage "
+        "Error (MAPE), ditambah simpangan baku untuk keterulangan.")
+    D.table(["Besaran", "Rumus", "Keterangan"], [
+        ["MAE", "MAE = Σ | x aktual − x perintah | ÷ n", "Dalam cm atau derajat; n = 5"],
+        ["MAPE", "MAPE = Σ ( | x aktual − x perintah | ÷ x perintah ) ÷ n × 100%", "Dalam persen"],
+        ["Akurasi", "A = 100% − MAPE", "Semakin tinggi semakin tepat"],
+        ["Simpangan baku", "s = √[ Σ (xi − x̄)² ÷ (n − 1) ]",
+         "Keterulangan (presisi): semakin kecil semakin konsisten"],
+        ["Galat posisi (C1, C2)", "e = √(Δ kolom² + Δ baris²) × 25 cm",
+         "Jarak posisi akhir ke titik rencana"],
+        ["Galat sensor MPU", "e MPU = | θ MPU − θ aktual |", "Ketelitian sensor MPU"],
+        ["Keberhasilan eksekusi", "(percobaan dengan semua FIN ÷ jumlah percobaan) × 100%",
+         "Keandalan komunikasi dan eksekusi"],
+    ], [3.6, 7.6, 5.2])
+    D.p("Contoh: FW:50 dengan baris awal 1,3 dan baris akhir 3,7 → jarak aktual 60 cm, galat 10 cm, "
+        "galat relatif 20%.", italic=True)
 
     # ---------------- 9 ----------------
-    D.h1("9. Prosedur Pelaksanaan")
-    D.h2("9.1 Tahap pendahuluan (kalibrasi, tidak dihitung sebagai data resmi)")
+    D.h1("9. Kriteria Keberhasilan (Usulan)")
+    D.table(["Skenario", "Parameter", "Batas usulan"], [
+        ["A1–A3", "MAPE jarak", "≤ 10%"],
+        ["A1–A3", "Penyimpangan lateral rata-rata", "≤ 10% dari jarak perintah"],
+        ["B1–B4", "MAE sudut", "≤ 5°"],
+        ["B1–B4", "MAE sensor MPU terhadap sudut aktual", "≤ 5°"],
+        ["C1", "Galat penutupan rata-rata", "≤ 30 cm (± 5% dari keliling 6 m)"],
+        ["C1", "Galat arah akhir rata-rata", "≤ 10°"],
+        ["C2", "Galat titik akhir rata-rata", "≤ 35 cm (± 5% dari lintasan 7 m)"],
+        ["C1, C2", "Keberhasilan eksekusi", "100% perintah selesai (FIN)"],
+    ], [2.6, 7.2, 6.6], size=10, center=(0,))
+    D.note("batas di atas masih usulan. Bila suatu kriteria tidak tercapai, penyebabnya dianalisis "
+           "(mis. jarak luncur, kalibrasi kecepatan, gain heading, angin) dan dilaporkan sebagai "
+           "temuan pengujian.")
+
+    # ---------------- 10 ----------------
+    D.h1("10. Prosedur Pelaksanaan")
+    D.h2("10.1 Tahap pendahuluan (tidak dihitung sebagai data resmi)")
     D.steps([
+        "Ukur 4 keramik berturut-turut dengan meteran (harus 100 cm) dan catat ukuran satu mozaik "
+        "kecil sebagai skala bantu 0,1 keramik. Tetapkan pojok (0 ; 0).",
         "Periksa arah putar: kirim CW:90. Bila robot berputar ke kiri, ubah YAW_SIGN menjadi −1.",
-        "Kirim FW:200 sebanyak 3 kali, ukur jarak nyata, lalu sesuaikan ROBOT_SPEED_MPS.",
-        "Uji gangguan magnet pada kompas: dengan robot diam dan motor hidup-mati, dekatkan "
-        "kompas ke posisi baca yang akan dipakai. Bila jarum bergeser, jauhkan kompas (mis. "
-        "diletakkan di ujung penggaris yang sejajar sumbu robot) sampai jarum tidak terpengaruh.",
-        "Setelah kalibrasi selesai, seluruh konstanta firmware dikunci dan tidak diubah selama "
-        "pengujian resmi.",
+        "Kirim FW:200 sebanyak 3 kali, baca jarak nyata dari grid, lalu sesuaikan ROBOT_SPEED_MPS.",
+        "Uji coba ruang: dari posisi C1, kirim CW:90 lalu FW:100, dan catat seberapa jauh robot "
+        "melebar saat belok dan meluncur setelah berhenti. Tentukan ukuran melintang C1 dan C2 "
+        "dengan tabel di bawah.",
+        "Setelah tahap ini selesai, seluruh konstanta firmware dan ukuran skenario dikunci.",
     ])
-    D.h2("9.2 Persiapan setiap sesi")
+    D.table(["Hasil uji coba (melebar + meluncur)", "Ukuran melintang C1/C2", "Start C1 / C2",
+             "Sisa ke dinding"], [
+        ["< 1 keramik (25 cm)", "1 m (FW:100)", "(2 ; 4) / (2 ; 16)", "± 20 cm"],
+        ["± 1 keramik", "0,75 m (FW:75)", "(2,5 ; 4) / (2,5 ; 16)", "± 32 cm"],
+        ["> 1 keramik", "0,5 m (FW:50)", "(3 ; 4) / (3 ; 16)", "± 45 cm"],
+    ], [5.0, 3.8, 4.2, 3.4], size=9.5, center=(1, 2, 3))
+    D.p("Bila ukuran diperkecil, panjang 2 m pada C1 dan jarak antar-lintasan 1 m pada C2 tetap; "
+        "perubahan dan alasannya dicatat dalam laporan.", size=10)
+
+    D.h2("10.2 Persiapan setiap sesi")
     D.steps([
         "Isi penuh baterai dan catat jam mulai.",
         "Nyalakan robot dalam keadaan diam ± 10 detik agar giroskop terkalibrasi; pastikan GUI "
         "menunjukkan status MPU sehat (S = 1).",
-        "Pilih bagian tepi kolam yang lurus dan cukup panjang (± 3,5 m) sebagai lokasi uji.",
         "Pilih mode REAL di GUI dan periksa koneksi (telemetri MPU masuk).",
-        "Catat tanggal, lokasi, cuaca, dan kondisi angin/air pada lembar data sesi.",
+        "Catat tanggal, cuaca, dan kondisi angin/air pada lembar data sesi.",
     ])
-    D.h2("9.3 Langkah setiap percobaan")
+    D.h2("10.3 Langkah setiap percobaan")
     D.steps([
-        "Letakkan robot di titik start sesuai skenario dan tunggu sampai diam (tidak hanyut).",
-        "Catat yaw MPU awal dari GUI; untuk skenario B dan C, baca dan catat azimuth awal "
-        "dengan kompas.",
+        "Letakkan robot di posisi start sesuai skenario, sejajar garis keramik, dan tunggu sampai "
+        "diam (tidak hanyut).",
+        "Catat yaw MPU awal dari GUI.",
         "Kirim perintah dari GUI (halaman MANUAL untuk A, B, C1; halaman MISI untuk C2).",
-        "Tunggu FIN, lalu tunggu robot diam ± 3 detik.",
-        "Ukur dengan meteran dan/atau baca kompas lagi, lalu catat ke lembar data, termasuk yaw "
-        "MPU akhir dan ada/tidaknya kirim ulang.",
-        "Kembalikan robot ke titik start, lalu ulangi hingga 5 percobaan valid.",
+        "Saat FIN muncul, catat baris robot bila memungkinkan (skenario A).",
+        "Tunggu robot diam ± 3 detik, lalu baca posisi dari grid dan catat ke lembar data, "
+        "termasuk yaw MPU akhir dan ada/tidaknya kirim ulang.",
+        "Kembalikan robot ke posisi start, lalu ulangi hingga 5 percobaan valid.",
     ])
-    D.h2("9.4 Percobaan yang gagal")
-    D.p("Percobaan yang gagal (sinyal hilang, robot menabrak tepi, terbawa angin, dan sebagainya) "
-        "tetap dicatat beserta penyebabnya, lalu diganti dengan percobaan baru sampai terkumpul 5 "
-        "data valid. Jumlah percobaan gagal ikut dilaporkan sebagai data keandalan.")
-    D.h2("9.5 Urutan dan estimasi waktu")
+    D.h2("10.4 Percobaan yang gagal")
+    D.p("Percobaan yang gagal (sinyal hilang, robot menabrak dinding, terbawa arus, dan "
+        "sebagainya) tetap dicatat beserta penyebabnya, lalu diganti dengan percobaan baru sampai "
+        "terkumpul 5 data valid. Jumlah percobaan gagal ikut dilaporkan sebagai data keandalan.")
+    D.h2("10.5 Estimasi waktu")
     D.table(["Kelompok", "Jumlah percobaan", "Perkiraan waktu"], [
-        ["Persiapan & kalibrasi", "—", "± 20 menit"],
-        ["A (lurus)", "15", "± 40 menit"],
-        ["B (belok)", "20", "± 50 menit"],
-        ["C (kombinasi)", "10", "± 50 menit"],
-        ["Total", "45", "± 2,5–3 jam (dapat dibagi dua sesi; isi baterai di antaranya)"],
+        ["Tahap pendahuluan", "—", "± 30 menit"],
+        ["A (lurus)", "15", "± 30 menit"],
+        ["B (belok)", "20", "± 40 menit"],
+        ["C (kombinasi)", "10", "± 40 menit"],
+        ["Total", "45", "± 2,5 jam (dapat dibagi dua sesi; isi baterai di antaranya)"],
     ], [4.5, 4.0, 7.9], size=10, center=(1,))
+
+    # ---------------- referensi ----------------
+    D.h1("Referensi")
+    for ref in (
+            "[1]  J. Putra dan D. E. Saputra, “Autonomous Drone Indoor Navigation Based on "
+            "Virtual 3D Map Reference,” IEEE, 2022.",
+            "[2]  D. E. Saputra, “Experiment on Pinhole Model Distance Calculation for Drone "
+            "Navigation.”"):
+        par = D.p(ref, size=10.5)
+        par.paragraph_format.left_indent = Cm(0.8)
+        par.paragraph_format.first_line_indent = Cm(-0.8)
 
     # ---------------- lampiran ----------------
     sec = d.add_section(WD_SECTION.NEW_PAGE)
@@ -831,15 +825,15 @@ def build(fig):
     sec.top_margin, sec.bottom_margin = Cm(1.8), Cm(1.6)
 
     D.h1("Lampiran — Lembar Pengambilan Data")
-    D.p("Satu tabel untuk setiap skenario. Isi di lapangan; kolom galat dan statistik boleh "
-        "dihitung setelahnya.", size=10)
+    D.p("Posisi ditulis dalam keramik (kolom ; baris), dibaca sampai 0,1. Kolom galat dan "
+        "statistik boleh dihitung setelahnya.", size=10)
     D.h2("Data sesi")
     D.table(["Keterangan", "Isi", "Keterangan", "Isi"], [
         ["Tanggal / jam mulai", "", "Baterai penuh saat mulai (Y/T)", ""],
-        ["Lokasi kolam", "", "Status MPU (S)", ""],
-        ["Cuaca / angin", "", "ROBOT_SPEED_MPS / KP_HEADING", ""],
-        ["Kondisi air (riak/arus)", "", "Pencatat", ""],
-    ], [5.0, 8.05, 5.0, 8.05], size=10, zebra=False, row_height=0.75)
+        ["Ukuran 1 keramik / 1 mozaik (cm)", "", "Status MPU (S)", ""],
+        ["Cuaca / angin / riak air", "", "ROBOT_SPEED_MPS / KP_HEADING", ""],
+        ["Ukuran melintang C1/C2 (hasil 10.1)", "", "Pencatat", ""],
+    ], [5.4, 7.65, 5.4, 7.65], size=10, zebra=False, row_height=0.75)
 
     blank = ["1", "2", "3", "4", "5", "Rata-rata", "Simp. baku"]
 
@@ -852,29 +846,26 @@ def build(fig):
                 D.shade(c, ZEBRA)
             D.cell(r.cells[0], r.cells[0].text, bold=True, size=9, align=CENTER)
 
-    a_h = ["Perc.", "d aktual (cm)", "Galat (cm)", "Galat (%)", "Jarak ke tepi (cm)",
-           "e lateral (cm)", "Waktu ON→FIN (s)", "Kirim ulang? (Y/T)", "Keterangan"]
-    a_w = [2.0, 2.6, 2.3, 2.3, 2.7, 2.5, 2.8, 2.6, 6.3]
-    for code, cmd in (("A1", "FW:50 (target 50 cm)"), ("A2", "FW:100 (target 100 cm)"),
-                      ("A3", "FW:200 (target 200 cm)")):
-        lembar(f"Skenario {code} — {cmd}", a_h, a_w)
+    a_h = ["Perc.", "Baris saat FIN (opsional)", "Posisi akhir (kolom ; baris)",
+           "Jarak aktual (cm)", "Galat (cm)", "Galat (%)", "Lateral (cm)",
+           "Jarak luncur (cm)", "Kirim ulang? (Y/T)", "Keterangan"]
+    a_w = [1.8, 2.6, 3.0, 2.4, 2.1, 2.1, 2.2, 2.4, 2.2, 5.3]
+    for code, cmd, tgt in (("A1", "FW:50", "baris 4"), ("A2", "FW:100", "baris 6"),
+                           ("A3", "FW:200", "baris 10")):
+        lembar(f"Skenario {code} — {cmd} (start (4 ; 2), target {tgt})", a_h, a_w)
     b_h = ["Perc.", "Yaw MPU awal (°)", "Yaw MPU akhir (°)", "Sudut MPU (°)",
-           "Azimuth kompas awal (°)", "Azimuth kompas akhir (°)", "Sudut aktual (°)",
-           "Galat aktual (°)", "Galat MPU vs aktual (°)", "Kirim ulang? (Y/T)", "Keterangan"]
-    b_w = [1.7, 2.1, 2.1, 1.9, 2.3, 2.3, 2.1, 2.1, 2.3, 1.9, 5.3]
-    for code, cmd in (("B1", "CW:45 (target 45°)"), ("B2", "CW:90 (target 90°)"),
-                      ("B3", "CCW:45 (target 45°)"), ("B4", "CCW:90 (target 90°)")):
-        lembar(f"Skenario {code} — {cmd}", b_h, b_w)
-    lembar("Skenario C1 — Kotak 1 × 2 m (target: kembali ke start, arah semula)",
-           ["Perc.", "Δx sepanjang tepi (cm)", "Jarak ke tepi (cm) [30]", "Δy (cm)",
-            "Galat penutupan (cm)", "Azimuth awal (°)", "Azimuth akhir (°)",
-            "Galat arah akhir (°)", "FIN (…/8)", "Waktu total (s)", "Keterangan"],
-           [1.7, 2.4, 2.4, 1.9, 2.4, 2.2, 2.2, 2.3, 1.8, 2.2, 5.5])
-    lembar("Skenario C2 — Zigzag mini 2 × 3 m (target: titik akhir 3 m dari start, 50 cm dari tepi)",
-           ["Perc.", "Δx dari titik akhir (cm)", "Jarak ke tepi (cm) [50]", "Δy (cm)",
-            "Galat titik akhir (cm)", "FIN (…/13)", "Kirim ulang (kali)", "Waktu total (s)",
-            "Keterangan"],
-           [2.0, 2.8, 2.8, 2.2, 2.8, 2.3, 2.6, 2.6, 6.0])
+           "Haluan (kolom ; baris)", "Buritan (kolom ; baris)", "Sudut aktual (°)",
+           "Galat aktual (°)", "Galat MPU vs aktual (°)", "Keterangan"]
+    b_w = [1.8, 2.2, 2.2, 2.1, 2.9, 2.9, 2.3, 2.2, 2.4, 5.1]
+    for code, cmd, st in (("B1", "CW:45", "(1,5 ; 5)"), ("B2", "CW:90", "(1,5 ; 5)"),
+                          ("B3", "CCW:45", "(6,5 ; 12)"), ("B4", "CCW:90", "(6,5 ; 12)")):
+        lembar(f"Skenario {code} — {cmd} (start {st})", b_h, b_w)
+    c_h = ["Perc.", "Posisi akhir (kolom ; baris)", "Δ kolom", "Δ baris", "Galat posisi (cm)",
+           "Haluan (kolom ; baris)", "Buritan (kolom ; baris)", "Arah akhir (°)", "FIN",
+           "Waktu total (s)", "Keterangan"]
+    c_w = [1.7, 3.0, 1.7, 1.7, 2.3, 2.8, 2.8, 2.0, 1.6, 2.2, 4.3]
+    lembar("Skenario C1 — Kotak (start & target (2 ; 4), FIN …/8)", c_h, c_w)
+    lembar("Skenario C2 — Zigzag mini (start (2 ; 16), target (2 ; 4), FIN …/13)", c_h, c_w)
     return d
 
 
@@ -907,7 +898,7 @@ def export_pdf(docx):
 
 
 def main():
-    fig = {"lurus": fig_lurus(), "belok": fig_belok(), "kombinasi": fig_kombinasi()}
+    fig = {"kolam": fig_kolam(), "hitung": fig_hitung()}
     doc = build(fig)
     try:
         doc.save(OUT_DOCX)
