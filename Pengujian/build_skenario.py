@@ -90,6 +90,59 @@ def _lbl(ax, x, y, t, color=INK, ha="left", size=7.2, weight="normal"):
             bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.85), zorder=7)
 
 
+def fig_sumbu():
+    fig, ax = plt.subplots(figsize=(8, 9.5))
+    ax.add_patch(Rectangle((0, 0), KOLAM_KOLOM, KOLAM_BARIS, fc=WATER, ec="#1e3a8a", lw=2.5))
+    for i in range(1, KOLAM_KOLOM):
+        ax.plot([i, i], [0, KOLAM_BARIS], color="#93c5fd", lw=0.8)
+    for j in range(1, KOLAM_BARIS):
+        ax.plot([0, KOLAM_KOLOM], [j, j], color="#93c5fd", lw=0.8)
+    for i in range(KOLAM_KOLOM + 1):
+        ax.text(i, -0.45, str(i), ha="center", va="top", fontsize=10, color="#b91c1c",
+                weight="bold")
+    for j in range(KOLAM_BARIS + 1):
+        ax.text(-0.3, j, str(j), ha="right", va="center", fontsize=9, color=GREEN, weight="bold")
+    ax.add_patch(FancyArrowPatch((0, -1.6), (KOLAM_KOLOM, -1.6), arrowstyle="-|>",
+                                 mutation_scale=18, color="#b91c1c", lw=2.5))
+    ax.text(4, -2.1, "KOLOM → hitung ke SAMPING (kiri → kanan)\n"
+            "0 sampai 8  •  sisi PENDEK kolam (2 m)", ha="center", va="top", fontsize=10.5,
+            color="#b91c1c", weight="bold")
+    ax.add_patch(FancyArrowPatch((-1.6, 0), (-1.6, KOLAM_BARIS), arrowstyle="-|>",
+                                 mutation_scale=18, color=GREEN, lw=2.5))
+    ax.text(-2.7, 10, "BARIS ↑ hitung ke DEPAN (menjauh dari tangga)\n"
+            "0 sampai 20  •  sisi PANJANG kolam (5 m)", ha="center", va="center", rotation=90,
+            fontsize=10.5, color=GREEN, weight="bold")
+    ax.plot(0, 0, marker="*", ms=22, color="#f59e0b", mec="black", zorder=6)
+    ax.text(0.25, 0.35, "pojok (0 ; 0)\ntitik nol", fontsize=9.5, weight="bold", color=INK,
+            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#f59e0b"))
+    rp, rl = ROBOT_P_CM / KERAMIK_CM, ROBOT_L_CM / KERAMIK_CM
+    _robot_k(ax, 4, 2, 90, ROBOT, length=rp, width=rl)
+    ax.plot([4, 4], [0, 2], color="#b91c1c", lw=1.6, ls="--", zorder=6)
+    ax.plot([0, 4], [2, 2], color=GREEN, lw=1.6, ls="--", zorder=6)
+    ax.text(5.05, 2.1, "robot di (4 ; 2)\n= 4 keramik dari dinding KIRI\n"
+            "= 2 keramik dari dinding BELAKANG", fontsize=9.5, va="center", color=INK,
+            bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="#cbd5e1"))
+    ax.plot(6, 12, "o", ms=10, color="#7c3aed", mec="black", zorder=6)
+    ax.plot([6, 6], [0, 12], color="#7c3aed", lw=1, ls=":")
+    ax.plot([0, 6], [12, 12], color="#7c3aed", lw=1, ls=":")
+    ax.text(5.9, 12.7, "(6 ; 12)\nkolom 6, baris 12", fontsize=9.5, ha="right",
+            color="#7c3aed", weight="bold",
+            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none"))
+    ax.text(4, 20.6, "ujung jauh kolam", ha="center", fontsize=10, color="#475569")
+    ax.text(4, -4.4, "▲ OPERATOR BERDIRI DI SINI (ujung pendek dekat tangga), "
+            "menghadap ke arah panjang kolam", ha="center", fontsize=10, weight="bold", color=INK)
+    ax.text(4, -5.4, "Cara tulis: (kolom ; baris)  →  angka SAMPING dulu, baru angka DEPAN",
+            ha="center", fontsize=11, weight="bold", color="#1e3a8a",
+            bbox=dict(boxstyle="round,pad=0.35", fc="#fef9c3", ec="#eab308"))
+    ax.set_xlim(-3.8, 10.8)
+    ax.set_ylim(-6.2, 21.3)
+    ax.set_aspect("equal")
+    ax.axis("off")
+    ax.set_title("Kolam dilihat dari atas (1 kotak = 1 keramik = 25 cm)", fontsize=12.5,
+                 weight="bold", color=INK)
+    return _save(fig, "fig_sumbu_kolam.png")
+
+
 def fig_kolam():
     fig, axs = plt.subplots(1, 4, figsize=(12, 7.6))
     a, b, c, d = axs
@@ -543,13 +596,18 @@ def build(fig):
         "koordinat sekaligus alat ukur posisi, serupa dengan area uji bergrid dan titik waypoint "
         "yang posisinya sudah pasti pada [1].")
     D.table(["Sumbu", "Arah", "Rentang", "Satuan"], [
-        ["Kolom", "melintang (lebar kolam)", "0 – 8", "1 kolom = 25 cm"],
-        ["Baris", "memanjang (panjang kolam)", "0 – 20", "1 baris = 25 cm"],
+        ["Kolom", "ke samping, kiri → kanan (sisi pendek, 2 m)", "0 – 8", "1 kolom = 25 cm"],
+        ["Baris", "ke depan, menjauh dari tangga (sisi panjang, 5 m)", "0 – 20", "1 baris = 25 cm"],
     ], [3.0, 5.4, 3.0, 5.0], size=10)
-    D.p("Posisi ditulis sebagai (kolom ; baris), dibaca sampai 0,1 keramik (2,5 cm) dengan bantuan "
-        "kotak mozaik kecil di dalam tiap keramik. Titik (0 ; 0) adalah pojok kolam yang dipilih "
-        "sebagai acuan dan dipakai tetap selama seluruh pengujian.")
-    D.figure(fig["kolam"], "Gambar 1. Tata letak skenario di kolam uji. Garis oranye menunjukkan "
+    D.p("Operator berdiri di ujung pendek kolam yang dekat tangga, menghadap ke arah panjang "
+        "kolam. Titik (0 ; 0) adalah pojok kiri di ujung tersebut dan dipakai tetap selama "
+        "seluruh pengujian. Posisi ditulis sebagai (kolom ; baris) — angka samping dulu, baru "
+        "angka depan — dan dibaca sampai 0,1 keramik (2,5 cm) dengan bantuan kotak mozaik kecil "
+        "di dalam tiap keramik. Contoh: (4 ; 2) berarti 4 keramik dari dinding kiri dan 2 keramik "
+        "dari dinding belakang.")
+    D.figure(fig["sumbu"], "Gambar 1. Sistem koordinat kolam: kolom dihitung ke samping, baris "
+             "dihitung ke depan dari pojok (0 ; 0).", 7.6)
+    D.figure(fig["kolam"], "Gambar 2. Tata letak skenario di kolam uji. Garis oranye menunjukkan "
              "badan robot 60 × 42 cm sesuai skala.", 16.4)
 
     # ---------------- 4 ----------------
@@ -570,7 +628,7 @@ def build(fig):
     # ---------------- 5 ----------------
     D.h1("5. Skenario Pengujian")
     D.p("Semua perintah dikirim dari GUI Pengendali Utama pada mode REAL. Posisi start dan target "
-        "ditulis dalam koordinat keramik (kolom ; baris); lihat Gambar 1.")
+        "ditulis dalam koordinat keramik (kolom ; baris); lihat Gambar 2.")
     zig = ("Dari halaman MISI (13 perintah): FW:100 → CW:90 → FW:100 → CW:90 → FW:100 → CCW:90 → "
            "FW:100 → CCW:90 → FW:100 → CW:90 → FW:100 → CW:90 → FW:100")
     t = D.table(["Kode", "Gerakan", "Perintah dari GUI", "Start", "Target", "Ulang"], [
@@ -650,7 +708,7 @@ def build(fig):
     D.bullet(" lihat tegak lurus dari atas titik yang dibaca. Melihat miring melalui air membuat "
              "posisi tampak bergeser (paralaks dan pembiasan). Bila titik jauh dari tepi, ambil "
              "foto HP tegak dari atas lalu baca keramiknya pada foto.", "Cara melihat —")
-    D.figure(fig["hitung"], "Gambar 2. Contoh membaca jarak dan sudut dari grid keramik", 16.0)
+    D.figure(fig["hitung"], "Gambar 3. Contoh membaca jarak dan sudut dari grid keramik", 16.0)
 
     D.h2("7.3 Gerak lurus (A1–A3)")
     D.steps([
@@ -758,7 +816,8 @@ def build(fig):
     D.h2("10.1 Tahap pendahuluan (tidak dihitung sebagai data resmi)")
     D.steps([
         "Ukur 4 keramik berturut-turut dengan meteran (harus 100 cm) dan catat ukuran satu mozaik "
-        "kecil sebagai skala bantu 0,1 keramik. Tetapkan pojok (0 ; 0).",
+        "kecil sebagai skala bantu 0,1 keramik. Tandai pojok (0 ; 0): pojok kiri di ujung dekat "
+        "tangga.",
         "Periksa arah putar: kirim CW:90. Bila robot berputar ke kiri, ubah YAW_SIGN menjadi −1.",
         "Kirim FW:200 sebanyak 3 kali, baca jarak nyata dari grid, lalu sesuaikan ROBOT_SPEED_MPS.",
         "Uji coba ruang: dari posisi C1, kirim CW:90 lalu FW:100, dan catat seberapa jauh robot "
@@ -899,7 +958,7 @@ def export_pdf(docx):
 
 
 def main():
-    fig = {"kolam": fig_kolam(), "hitung": fig_hitung()}
+    fig = {"sumbu": fig_sumbu(), "kolam": fig_kolam(), "hitung": fig_hitung()}
     doc = build(fig)
     try:
         doc.save(OUT_DOCX)
