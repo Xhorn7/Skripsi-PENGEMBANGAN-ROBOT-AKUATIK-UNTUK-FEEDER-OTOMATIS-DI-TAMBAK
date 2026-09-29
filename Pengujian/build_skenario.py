@@ -485,7 +485,7 @@ def build(fig):
          "4 lintasan × 1 m dengan jarak antar-lintasan 1 m (total 7 m). Semua muat di kolam uji "
          "5 × 2 m dan masih di dalam batas perintah robot (FW 10–200 cm, CW/CCW 1–180°)."],
         ["Berapa kali pengulangan?",
-         "Setiap skenario diulang 5 kali (5 data valid), total 45 percobaan."],
+         "Setiap skenario diulang 3 kali (3 data valid), total 27 percobaan."],
         ["Bagaimana cara mengukurnya?",
          "Dengan grid keramik lantai kolam (25 × 25 cm) sebagai alat ukur posisi, seperti area "
          "uji bergrid pada [1]. Posisi titik tengah, haluan, dan buritan robot dibaca langsung "
@@ -574,23 +574,23 @@ def build(fig):
     zig = ("Dari halaman MISI (13 perintah): FW:100 → CW:90 → FW:100 → CW:90 → FW:100 → CCW:90 → "
            "FW:100 → CCW:90 → FW:100 → CW:90 → FW:100 → CW:90 → FW:100")
     t = D.table(["Kode", "Gerakan", "Perintah dari GUI", "Start", "Target", "Ulang"], [
-        ["A1", "Maju lurus 50 cm", "FW:50", "(4 ; 2), menghadap sepanjang baris", "baris 4", "5×"],
-        ["A2", "Maju lurus 100 cm", "FW:100", "(4 ; 2)", "baris 6", "5×"],
-        ["A3", "Maju lurus 200 cm", "FW:200", "(4 ; 2)", "baris 10", "5×"],
-        ["B1", "Belok kanan 45°", "CW:45", "(1,5 ; 5), menghadap sepanjang baris", "arah 45° kanan", "5×"],
-        ["B2", "Belok kanan 90°", "CW:90", "(1,5 ; 5)", "arah 90° kanan", "5×"],
-        ["B3", "Belok kiri 45°", "CCW:45", "(6,5 ; 12), menghadap sepanjang baris", "arah 45° kiri", "5×"],
-        ["B4", "Belok kiri 90°", "CCW:90", "(6,5 ; 12)", "arah 90° kiri", "5×"],
+        ["A1", "Maju lurus 50 cm", "FW:50", "(4 ; 2), menghadap sepanjang baris", "baris 4", "3×"],
+        ["A2", "Maju lurus 100 cm", "FW:100", "(4 ; 2)", "baris 6", "3×"],
+        ["A3", "Maju lurus 200 cm", "FW:200", "(4 ; 2)", "baris 10", "3×"],
+        ["B1", "Belok kanan 45°", "CW:45", "(1,5 ; 5), menghadap sepanjang baris", "arah 45° kanan", "3×"],
+        ["B2", "Belok kanan 90°", "CW:90", "(1,5 ; 5)", "arah 90° kanan", "3×"],
+        ["B3", "Belok kiri 45°", "CCW:45", "(6,5 ; 12), menghadap sepanjang baris", "arah 45° kiri", "3×"],
+        ["B4", "Belok kiri 90°", "CCW:90", "(6,5 ; 12)", "arah 90° kiri", "3×"],
         ["C1", "Lintasan kotak 1 × 2 m (4 × belok kanan)",
          "FW:200 → CW:90 → FW:100 → CW:90 → FW:200 → CW:90 → FW:100 → CW:90",
-         "(2 ; 4), menghadap sepanjang baris", "kembali ke (2 ; 4), arah semula", "5×"],
+         "(2 ; 4), menghadap sepanjang baris", "kembali ke (2 ; 4), arah semula", "3×"],
         ["C2", "Misi zigzag mini: 4 lintasan melintang 1 m, jarak antar-lintasan 1 m", zig,
-         "(2 ; 16), menghadap melintang ke kolom 6", "(2 ; 4)", "5×"],
+         "(2 ; 16), menghadap melintang ke kolom 6", "(2 ; 4)", "3×"],
         ["", "", "", "", "", ""],
     ], [1.1, 3.2, 4.6, 3.6, 2.8, 1.1], size=9, center=(0, 5))
     last = t.rows[-1]
     merged = last.cells[0].merge(last.cells[5])
-    D.cell(merged, "Total: 9 skenario × 5 pengulangan = 45 percobaan valid", bold=True,
+    D.cell(merged, "Total: 9 skenario × 3 pengulangan = 27 percobaan valid", bold=True,
            size=9.5, align=CENTER)
     D.shade(merged, "DCE6F0")
 
@@ -607,8 +607,9 @@ def build(fig):
     D.bullet(" pola sapuan boustrophedon yang dipakai robot untuk menebar pakan, dihasilkan "
              "langsung oleh perencana jalur aplikasi dan diperkecil agar muat di kolam uji.",
              "Zigzag mini —")
-    D.bullet(" jumlah minimum agar rata-rata dan simpangan baku bermakna; dapat ditambah menjadi "
-             "10 kali bila waktu memungkinkan.", "Pengulangan 5 kali —")
+    D.bullet(" jumlah minimum agar rata-rata dan simpangan baku tetap bermakna sambil menjaga "
+             "waktu pelaksanaan; ditambah bila hasilnya sangat bervariasi.",
+             "Pengulangan 3 kali —")
     D.note("dengan robot 60 cm, ujung depan robot hanya berjarak sekitar 20 cm dari dinding saat "
            "menghadap melintang di C1 dan C2. Karena itu ukuran melintang C1 dan C2 ditetapkan "
            "setelah uji coba ruang pada tahap pendahuluan (bagian 10.1).", lead="Catatan ruang: ")
@@ -722,7 +723,7 @@ def build(fig):
     D.p("Metrik mengikuti [1] dan [2]: Mean Absolute Error (MAE) dan Mean Absolute Percentage "
         "Error (MAPE), ditambah simpangan baku untuk keterulangan.")
     D.table(["Besaran", "Rumus", "Keterangan"], [
-        ["MAE", "MAE = Σ | x aktual − x perintah | ÷ n", "Dalam cm atau derajat; n = 5"],
+        ["MAE", "MAE = Σ | x aktual − x perintah | ÷ n", "Dalam cm atau derajat; n = 3"],
         ["MAPE", "MAPE = Σ ( | x aktual − x perintah | ÷ x perintah ) ÷ n × 100%", "Dalam persen"],
         ["Akurasi", "A = 100% − MAPE", "Semakin tinggi semakin tepat"],
         ["Simpangan baku", "s = √[ Σ (xi − x̄)² ÷ (n − 1) ]",
@@ -791,19 +792,19 @@ def build(fig):
         "Saat FIN muncul, catat baris robot bila memungkinkan (skenario A).",
         "Tunggu robot diam ± 3 detik, lalu baca posisi dari grid dan catat ke lembar data, "
         "termasuk yaw MPU akhir dan ada/tidaknya kirim ulang.",
-        "Kembalikan robot ke posisi start, lalu ulangi hingga 5 percobaan valid.",
+        "Kembalikan robot ke posisi start, lalu ulangi hingga 3 percobaan valid.",
     ])
     D.h2("10.4 Percobaan yang gagal")
     D.p("Percobaan yang gagal (sinyal hilang, robot menabrak dinding, terbawa arus, dan "
         "sebagainya) tetap dicatat beserta penyebabnya, lalu diganti dengan percobaan baru sampai "
-        "terkumpul 5 data valid. Jumlah percobaan gagal ikut dilaporkan sebagai data keandalan.")
+        "terkumpul 3 data valid. Jumlah percobaan gagal ikut dilaporkan sebagai data keandalan.")
     D.h2("10.5 Estimasi waktu")
     D.table(["Kelompok", "Jumlah percobaan", "Perkiraan waktu"], [
         ["Tahap pendahuluan", "—", "± 30 menit"],
-        ["A (lurus)", "15", "± 30 menit"],
-        ["B (belok)", "20", "± 40 menit"],
-        ["C (kombinasi)", "10", "± 40 menit"],
-        ["Total", "45", "± 2,5 jam (dapat dibagi dua sesi; isi baterai di antaranya)"],
+        ["A (lurus)", "9", "± 20 menit"],
+        ["B (belok)", "12", "± 25 menit"],
+        ["C (kombinasi)", "6", "± 25 menit"],
+        ["Total", "27", "± 1,5–2 jam"],
     ], [4.5, 4.0, 7.9], size=10, center=(1,))
 
     # ---------------- referensi ----------------
@@ -825,8 +826,8 @@ def build(fig):
     sec.top_margin, sec.bottom_margin = Cm(1.8), Cm(1.6)
 
     D.h1("Lampiran — Lembar Pengambilan Data")
-    D.p("Posisi ditulis dalam keramik (kolom ; baris), dibaca sampai 0,1. Kolom galat dan "
-        "statistik boleh dihitung setelahnya.", size=10)
+    D.p("Posisi ditulis dalam keramik (kolom ; baris), dibaca sampai 0,1. Versi Excel dengan "
+        "perhitungan otomatis tersedia sebagai Lembar_Data_Pengujian.xlsx.", size=10)
     D.h2("Data sesi")
     D.table(["Keterangan", "Isi", "Keterangan", "Isi"], [
         ["Tanggal / jam mulai", "", "Baterai penuh saat mulai (Y/T)", ""],
@@ -835,7 +836,7 @@ def build(fig):
         ["Ukuran melintang C1/C2 (hasil 10.1)", "", "Pencatat", ""],
     ], [5.4, 7.65, 5.4, 7.65], size=10, zebra=False, row_height=0.75)
 
-    blank = ["1", "2", "3", "4", "5", "Rata-rata", "Simp. baku"]
+    blank = ["1", "2", "3", "Rata-rata", "Simp. baku"]
 
     def lembar(title, headers, widths):
         D.h2(title)
