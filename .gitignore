@@ -25,3 +25,6 @@ desktop.ini
 dist/
 # ===== Log auto-simpan GUI Feeder =====
 Master Code/Transmitter/logs/
+
+# ===== File kunci Office (dokumen sedang terbuka) =====
+~$*
