@@ -57,7 +57,7 @@ from typing import Callable, Optional
 # =====================================================================
 
 LANE_WIDTH_M      = 1.0     # jarak antar lintasan (m)
-ROBOT_SPEED_MPS   = 0.5     # kecepatan robot @ CRUISE_PWM (m/s)
+ROBOT_SPEED_MPS   = 0.135   # kecepatan robot @ CRUISE_PWM (m/s), WAJIB sama dengan firmware
 CRUISE_PWM        = 1300    # throttle jelajah (us)
 STOP_PWM          = 1000    # throttle diam/arming (us)
 FULL_PWM          = 2000    # throttle penuh (us)

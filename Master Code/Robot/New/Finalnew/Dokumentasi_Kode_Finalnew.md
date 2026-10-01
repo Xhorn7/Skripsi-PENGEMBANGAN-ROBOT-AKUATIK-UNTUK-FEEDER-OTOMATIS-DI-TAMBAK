@@ -69,7 +69,7 @@ Konsekuensinya:
 
 | Konstanta | Nilai | Arti |
 |---|---|---|
-| `ROBOT_SPEED_MPS` | `0.5f` | Kecepatan jelajah pada `CRUISE_PWM` (m/s). **Wajib diukur di air** — menentukan ketepatan jarak `FW` |
+| `ROBOT_SPEED_MPS` | `0.135f` | Kecepatan jelajah pada `CRUISE_PWM` (m/s). Hasil kalibrasi di kolam uji: `FW:200` tiga kali menempuh rata-rata 54 cm, jadi 0,5 × 54 ÷ 200. **Wajib sama dengan `feeder_core.py`** — aplikasi memakainya untuk batas tunggu `FIN` |
 | `CRUISE_PWM` | `1300` | Throttle jelajah (µs) |
 | `KP_HEADING` | `8.0f` | Gain proporsional koreksi arah saat maju lurus |
 | `MAX_CORRECTION` | `60` | Batas koreksi PWM (µs) agar tidak ekstrem |
