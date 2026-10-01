@@ -132,7 +132,7 @@ Servo escRight;
 
 // ================= KALIBRASI =================
 
-#define ROBOT_SPEED_MPS   0.5f   // kecepatan robot @ CRUISE_PWM (m/s) — UKUR di air!
+#define ROBOT_SPEED_MPS   0.135f // kalibrasi kolam uji: FW:200 x3 -> rata-rata 54 cm (m/s)
 #define CRUISE_PWM        1300   // throttle jelajah
 #define KP_HEADING        8.0f   // gain proporsional koreksi heading
 #define MAX_CORRECTION    60     // batas koreksi PWM (us) agar tidak ekstrem
