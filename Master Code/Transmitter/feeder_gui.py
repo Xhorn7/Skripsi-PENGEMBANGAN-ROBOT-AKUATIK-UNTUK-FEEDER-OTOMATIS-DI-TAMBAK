@@ -491,7 +491,7 @@ class FeederGUI(ctk.CTk):
         self.entry_panjang = self._field(left, "Panjang", "m", "10")
         self.entry_lebar   = self._field(left, "Lebar", "m", "4")
         self.entry_lanew   = self._field(left, "Lebar lintasan", "m", "1")
-        self.entry_speed   = self._field(left, "Kecepatan", "m/s", "0.5")
+        self.entry_speed   = self._field(left, "Kecepatan", "m/s", f"{ROBOT_SPEED_MPS:g}")
 
         row_c = ctk.CTkFrame(left, fg_color="transparent")
         row_c.pack(fill="x", padx=self.px(12), pady=self.px(2))
