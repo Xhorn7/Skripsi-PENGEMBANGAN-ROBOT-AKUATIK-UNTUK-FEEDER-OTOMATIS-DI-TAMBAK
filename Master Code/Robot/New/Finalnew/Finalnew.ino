@@ -132,7 +132,9 @@ Servo escRight;
 
 // ================= KALIBRASI =================
 
-#define ROBOT_SPEED_MPS   0.5f   // kecepatan robot @ CRUISE_PWM (m/s) — UKUR di air!
+#define ROBOT_SPEED_MPS   0.28f  // kecepatan setelah lancar @ CRUISE_PWM (m/s)
+#define FW_START_MS       2100   // waktu awal sebelum robot bergerak berarti (ms)
+// Kalibrasi kolam uji: motor 4,0 s -> 54 cm, 7,4 s -> 150 cm.
 #define CRUISE_PWM        1300   // throttle jelajah
 #define KP_HEADING        8.0f   // gain proporsional koreksi heading
 #define MAX_CORRECTION    60     // batas koreksi PWM (us) agar tidak ekstrem
@@ -781,7 +783,7 @@ MoveResult executeForward(int distCm)
 {
   mpuUpdate();
   float targetYaw = mpu.getAngleZ();
-  unsigned long durationMs =
+  unsigned long durationMs = FW_START_MS +
       (unsigned long)((distCm / 100.0f) / ROBOT_SPEED_MPS * 1000.0f);
   unsigned long start = millis();
 

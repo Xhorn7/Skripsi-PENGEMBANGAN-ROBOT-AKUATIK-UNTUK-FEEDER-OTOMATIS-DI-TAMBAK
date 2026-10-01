@@ -69,7 +69,8 @@ Konsekuensinya:
 
 | Konstanta | Nilai | Arti |
 |---|---|---|
-| `ROBOT_SPEED_MPS` | `0.5f` | Kecepatan jelajah pada `CRUISE_PWM` (m/s). **Wajib diukur di air** — menentukan ketepatan jarak `FW` |
+| `ROBOT_SPEED_MPS` | `0.28f` | Kecepatan setelah robot lancar pada `CRUISE_PWM` (m/s) |
+| `FW_START_MS` | `2100` | Waktu awal sebelum robot bergerak berarti (ms). Durasi `FW` = `FW_START_MS` + jarak ÷ `ROBOT_SPEED_MPS`. Kalibrasi di kolam uji: motor 4,0 s → 54 cm dan 7,4 s → 150 cm, sehingga kecepatan = 96 cm ÷ 3,4 s ≈ 0,28 m/s dan awalan ≈ 2,1 s. **Kedua nilai wajib sama dengan `feeder_core.py`** — aplikasi memakainya untuk batas tunggu `FIN` |
 | `CRUISE_PWM` | `1300` | Throttle jelajah (µs) |
 | `KP_HEADING` | `8.0f` | Gain proporsional koreksi arah saat maju lurus |
 | `MAX_CORRECTION` | `60` | Batas koreksi PWM (µs) agar tidak ekstrem |
@@ -263,7 +264,7 @@ Telemetri MPU sengaja diselipkan **hanya setelah ada paket masuk**, bukan tiap i
 Maju lurus sejauh `distCm` sentimeter. Durasi diturunkan dari jarak dan kecepatan jelajah:
 
 ```
-durationMs = (distCm / 100.0) / ROBOT_SPEED_MPS * 1000
+durationMs = FW_START_MS + (distCm / 100.0) / ROBOT_SPEED_MPS * 1000
 ```
 
 Arah hadap saat perintah diterima **dikunci** sebagai `targetYaw`, lalu dipertahankan dengan kendali proporsional:
