@@ -57,7 +57,8 @@ from typing import Callable, Optional
 # =====================================================================
 
 LANE_WIDTH_M      = 1.0     # jarak antar lintasan (m)
-ROBOT_SPEED_MPS   = 0.135   # kecepatan robot @ CRUISE_PWM (m/s), WAJIB sama dengan firmware
+ROBOT_SPEED_MPS   = 0.28    # kecepatan setelah lancar @ CRUISE_PWM (m/s), WAJIB sama dengan firmware
+FW_START_S        = 2.1     # waktu awal FW sebelum robot bergerak berarti, WAJIB sama dengan firmware
 CRUISE_PWM        = 1300    # throttle jelajah (us)
 STOP_PWM          = 1000    # throttle diam/arming (us)
 FULL_PWM          = 2000    # throttle penuh (us)
@@ -233,7 +234,7 @@ class RobotCommand:
         """Perkiraan lama eksekusi — dipakai sebagai batas tunggu sinyal FIN."""
         spd = speed_mps if speed_mps and speed_mps > 0 else ROBOT_SPEED_MPS
         if self.move == MOVE_FW:
-            return (self.dist / 100.0) / spd
+            return FW_START_S + (self.dist / 100.0) / spd
         if self.move in (MOVE_CW, MOVE_CCW):
             return self.dist / TURN_RATE_DPS
         return 0.0
