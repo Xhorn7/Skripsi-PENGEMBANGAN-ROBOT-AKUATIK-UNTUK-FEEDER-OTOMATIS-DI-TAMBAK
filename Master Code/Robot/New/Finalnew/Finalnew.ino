@@ -576,18 +576,23 @@ void stopBoat()
   escRight.writeMicroseconds(1000);
 }
 
-// Putar ke kiri / berlawanan jarum jam (motor kiri stop, kanan maju)
-void spinCCW()
-{
-  escLeft.writeMicroseconds(1000);
-  escRight.writeMicroseconds(CRUISE_PWM);
-}
+// Pada robot ini kabel ESC tersilang: ESC_LEFT_PIN (GPIO25) menggerakkan motor
+// KANAN secara fisik dan ESC_RIGHT_PIN (GPIO26) motor KIRI. Uji kolam: CW:45
+// lama berbelok ke kiri. Heading-hold FW sudah benar dengan susunan ini, jadi
+// hanya fungsi putar yang disesuaikan. Jangan tukar kabel ESC tanpa mengubah ini.
 
-// Putar ke kanan / searah jarum jam (motor kanan stop, kiri maju)
-void spinCW()
+// Putar ke kiri / berlawanan jarum jam: motor kanan fisik (GPIO25) maju
+void spinCCW()
 {
   escLeft.writeMicroseconds(CRUISE_PWM);
   escRight.writeMicroseconds(1000);
+}
+
+// Putar ke kanan / searah jarum jam: motor kiri fisik (GPIO26) maju
+void spinCW()
+{
+  escLeft.writeMicroseconds(1000);
+  escRight.writeMicroseconds(CRUISE_PWM);
 }
 
 // =========================================
