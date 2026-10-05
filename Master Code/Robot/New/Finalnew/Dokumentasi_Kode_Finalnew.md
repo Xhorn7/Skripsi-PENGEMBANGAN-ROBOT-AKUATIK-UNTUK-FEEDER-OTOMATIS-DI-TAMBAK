@@ -75,7 +75,7 @@ Konsekuensinya:
 | `KP_HEADING` | `8.0f` | Gain proporsional koreksi arah saat maju lurus |
 | `MAX_CORRECTION` | `60` | Batas koreksi PWM (µs) agar tidak ekstrem |
 | `HEADING_DEADBAND` | `2.0f` | Toleransi error arah (derajat) sebelum koreksi aktif |
-| `TURN_TOLERANCE` | `3.0f` | Toleransi sudut akhir putaran (derajat) |
+| `TURN_COAST_DEG` | `15.0f` | Kompensasi inersia putar: motor dimatikan sekian derajat sebelum target karena robot masih berputar setelah motor mati. Kalibrasi kolam uji B1 (CW:45, motor mati di 42°) berhenti di 54,7° dan 58,6° |
 | `TURN_RATE_DPS` | `60.0f` | Perkiraan laju putar (derajat/detik) — hanya untuk **batas waktu**, bukan penentu sudut |
 | `SIGNAL_TIMEOUT_MS` | `3000` | Failsafe: berhenti bila tak ada sinyal selama ini |
 | `ON_INTERVAL_MS` | `1000` | Interval kirim `ON [Moves]` — **ditetapkan spesifikasi**, jangan diubah |
@@ -295,7 +295,7 @@ startYaw = yaw saat perintah diterima
 loop:
     delta  = yaw - startYaw            // dinormalisasi ke -180..180
     turned = (clockwise ? -delta : delta) * YAW_SIGN
-    if (turned >= deg - TURN_TOLERANCE) selesai
+    if (turned >= max(deg - TURN_COAST_DEG, 0.3 * deg)) selesai
 ```
 
 `turned` selalu dihitung **positif ke arah yang diperintahkan**, sehingga satu rumus melayani kedua arah.
