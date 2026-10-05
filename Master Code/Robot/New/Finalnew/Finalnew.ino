@@ -139,7 +139,8 @@ Servo escRight;
 #define KP_HEADING        8.0f   // gain proporsional koreksi heading
 #define MAX_CORRECTION    60     // batas koreksi PWM (us) agar tidak ekstrem
 #define HEADING_DEADBAND  2.0f   // toleransi error heading (derajat)
-#define TURN_TOLERANCE    3.0f   // toleransi sudut akhir putaran (derajat)
+#define TURN_COAST_DEG    15.0f  // robot masih berputar ± sekian derajat setelah motor mati
+// Kalibrasi kolam uji B1 (CW:45, motor mati di 42°): berhenti di 54,7° dan 58,6°.
 #define TURN_RATE_DPS     60.0f  // perkiraan laju putar (derajat/detik) utk batas waktu
 #define SIGNAL_TIMEOUT_MS 3000   // failsafe: stop bila tak ada sinyal selama ini (ms)
 #define ON_INTERVAL_MS    1000   // interval kirim "ON [Moves]" sesuai spesifikasi
@@ -841,6 +842,8 @@ MoveResult executeTurn(int deg, bool clockwise)
   unsigned long openLoopMs = (unsigned long)(deg / TURN_RATE_DPS * 1000.0f);
   // Batas waktu pengaman mode closed-loop: 3x perkiraan + 3 detik.
   unsigned long limitMs = openLoopMs * 3 + 3000;
+  // Motor dimatikan lebih awal karena inersia; batas bawah agar putaran kecil tetap jalan.
+  float stopDeg = max((float)deg - TURN_COAST_DEG, deg * 0.3f);
   unsigned long start = millis();
 
   Serial.print(clockwise ? "CW " : "CCW ");
@@ -875,7 +878,7 @@ MoveResult executeTurn(int deg, bool clockwise)
 
     // Kemajuan putaran selalu dihitung positif ke arah yang diperintahkan.
     float turned = (clockwise ? -delta : delta) * YAW_SIGN;
-    if (turned >= (float)deg - TURN_TOLERANCE)
+    if (turned >= stopDeg)
       break;
 
     delay(20);
