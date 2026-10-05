@@ -4,13 +4,17 @@ Buat Lembar_Data_Pengujian.xlsx — lembar isian dengan perhitungan otomatis.
     pip install -r requirements.txt
     python buat_lembar_data.py
 
-Isi hanya sel berlatar KUNING (hasil baca grid keramik di kolam). Kolom abu-abu
-berisi rumus: jarak, galat, %, lateral, jarak luncur, sudut, MAE, MAPE, dan
-simpangan baku terhitung sendiri.
+Isi hanya sel berlatar KUNING. A: baris/kolom keramik; B: hitungan mozaik
+pelampung kiri dari foto tegak + yaw dari log GUI; C1: geser & arah dari foto
+awal-akhir (lihat ukur_foto_c1.py) + FIN & waktu dari log GUI. Kolom abu-abu
+berisi rumus: jarak, galat, %, lateral, sudut, MAE, MAPE, dan simpangan baku.
+File yang sudah berisi data tidak akan ditimpa.
 """
+import sys
 from pathlib import Path
 
 from openpyxl import Workbook
+from openpyxl.formatting.rule import FormulaRule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
@@ -19,6 +23,9 @@ OUT = HERE / "Lembar_Data_Pengujian.xlsx"
 
 N = 3                      # pengulangan per skenario
 KERAMIK = 25               # cm
+ROBOT_CM = 60              # panjang robot / pelampung
+MOZAIK_CM = 4.1            # sisi satu kotak mozaik kecil di lantai kolam
+TOLERANSI_CM = 10          # beda bacaan panjang yang masih dianggap wajar
 BARIS_START, KOLOM_START = 2, 4      # start skenario A
 
 NAVY = "1E3A5F"
@@ -109,34 +116,57 @@ def sheet_a(wb, kode, perintah, target_cm):
 
 
 def sheet_b(wb, kode, perintah, target_deg):
-    headers = ["Perc.", "Yaw MPU awal (°)", "Yaw MPU akhir (°)", "Haluan kolom", "Haluan baris",
-               "Buritan kolom", "Buritan baris", "Sudut MPU (°)", "Sudut aktual (°)",
-               "Galat aktual (°)", "Galat MPU vs aktual (°)", "Keterangan"]
-    ws = sheet(wb, kode, f"{kode} — {perintah}   (target {target_deg}°, arah awal 0° "
-               "sejajar garis baris)", headers,
-               [6, 11, 11, 10, 10, 10, 10, 11, 12, 11, 13, 22], n_isi=7,
-               rows_extra=[("MAE sudut (°)", mae("J")), ("MAE MPU (°)", mae("K"))])
+    """Sudut dari satu pelampung: hitung kotak mozaik dari ujung belakang ke ujung depan."""
+    headers = ["Perc.", "Yaw MPU awal (°)", "Yaw MPU akhir (°)",
+               "Mozaik ke SAMPING (belakang → depan pelampung kiri)",
+               "Mozaik ke DEPAN (minus bila ke belakang)",
+               "Sudut MPU (°)", "Sudut aktual (°)", "Galat aktual (°)",
+               "Galat MPU vs aktual (°)", f"Cek panjang pelampung (cm) ≈ {ROBOT_CM}",
+               "Keterangan"]
+    ws = sheet(wb, kode, f"{kode} — {perintah}   (target {target_deg}°)  •  hitung kotak "
+               "mozaik dari ujung BELAKANG ke ujung DEPAN pelampung KIRI", headers,
+               [6, 11, 11, 16, 15, 11, 12, 11, 13, 14, 26], n_isi=5,
+               rows_extra=[("MAE sudut (°)", mae("H")), ("MAE MPU (°)", mae("I"))])
+    ws.row_dimensions[2].height = 46
     for r in range(3, 3 + N):
-        isi(ws, r, 8, f'=IF(OR(B{r}="",C{r}=""),"",ABS(C{r}-B{r}))')
-        isi(ws, r, 9, f'=IF(OR(D{r}="",F{r}=""),"",ABS(DEGREES(ATAN2(E{r}-G{r},D{r}-F{r}))))')
-        isi(ws, r, 10, f'=IF(I{r}="","",ABS(I{r}-{target_deg}))')
-        isi(ws, r, 11, f'=IF(OR(H{r}="",I{r}=""),"",ABS(H{r}-I{r}))')
+        isi(ws, r, 6, f'=IF(OR(B{r}="",C{r}=""),"",ABS(MOD(C{r}-B{r}+180,360)-180))')
+        isi(ws, r, 7, f'=IF(OR(D{r}="",E{r}=""),"",DEGREES(ATAN2(E{r},ABS(D{r}))))')
+        isi(ws, r, 8, f'=IF(G{r}="","",ABS(G{r}-{target_deg}))')
+        isi(ws, r, 9, f'=IF(OR(F{r}="",G{r}=""),"",ABS(F{r}-G{r}))')
+        isi(ws, r, 10, f'=IF(OR(D{r}="",E{r}=""),"",ROUND(SQRT(D{r}^2+E{r}^2)*{MOZAIK_CM},1))')
+    ws.conditional_formatting.add(
+        f"J3:J{2 + N}",
+        FormulaRule(formula=[f'AND(ISNUMBER(J3),ABS(J3-{ROBOT_CM})>{TOLERANSI_CM})'],
+                    fill=PatternFill(fill_type="solid", start_color="FCA5A5", end_color="FCA5A5"),
+                    font=Font(bold=True, color="991B1B")))
+    ws.cell(row=ws.max_row + 1, column=1,
+            value="Contoh: 10 ke samping & 10 ke depan = 45°; 15 ke samping & 0 ke depan = 90°. "
+                  "Cek panjang merah = salah hitung, hitung ulang dari foto.").font = Font(italic=True, size=9, color="991B1B")
     return ws
 
 
-def sheet_c(wb, kode, judul, kolom_target, baris_target, n_fin):
-    headers = ["Perc.", "Kolom akhir", "Baris akhir", "Haluan kolom", "Haluan baris",
-               "Buritan kolom", "Buritan baris", "Δ kolom", "Δ baris", "Galat posisi (cm)",
-               "Arah akhir (°)", f"FIN (…/{n_fin})", "Waktu total (s)", "Keterangan"]
-    ws = sheet(wb, kode, f"{kode} — {judul}   (target kolom {kolom_target} ; "
-               f"baris {baris_target})", headers,
-               [6, 10, 10, 10, 10, 10, 10, 9, 9, 12, 11, 10, 12, 20], n_isi=7,
-               rows_extra=[("MAE posisi (cm)", mae("J"))])
+def sheet_c1_foto(wb):
+    """Kotak 1 x 2 m: pergeseran & arah dihitung dari foto awal dan akhir (ukur_foto_c1.py)."""
+    headers = ["Perc.",
+               "Geser ke SAMPING (mozaik, ujung belakang pelampung kiri)",
+               "Geser ke DEPAN (mozaik, minus bila ke belakang)",
+               "Arah: mozaik ke SAMPING (pelampung kiri)",
+               "Arah: mozaik ke DEPAN",
+               "FIN (…/8)", "Waktu total (s)",
+               "Galat posisi (cm)", "Arah akhir (°)", "Galat arah (°)", "Keterangan"]
+    ws = sheet(wb, "C1", "C1 — Kotak 1 x 2 m   (target: robot kembali ke posisi & arah start) "
+               "•  dihitung dari foto sebelum & sesudah", headers,
+               [6, 16, 15, 14, 12, 9, 10, 11, 10, 10, 30], n_isi=7,
+               rows_extra=[("MAE posisi (cm)", mae("H")), ("MAE arah (°)", mae("J"))])
+    ws.row_dimensions[2].height = 58
     for r in range(3, 3 + N):
-        isi(ws, r, 8, f'=IF(B{r}="","",B{r}-{kolom_target})')
-        isi(ws, r, 9, f'=IF(C{r}="","",C{r}-{baris_target})')
-        isi(ws, r, 10, f'=IF(OR(H{r}="",I{r}=""),"",SQRT(H{r}^2+I{r}^2)*{KERAMIK})')
-        isi(ws, r, 11, f'=IF(OR(D{r}="",F{r}=""),"",ABS(DEGREES(ATAN2(E{r}-G{r},D{r}-F{r}))))')
+        isi(ws, r, 8, f'=IF(OR(B{r}="",C{r}=""),"",ROUND(SQRT(B{r}^2+C{r}^2)*{MOZAIK_CM},1))')
+        isi(ws, r, 9, f'=IF(OR(D{r}="",E{r}=""),"",DEGREES(ATAN2(E{r},ABS(D{r}))))')
+        isi(ws, r, 10, f'=IF(I{r}="","",ABS(I{r}))')
+    ws.cell(row=ws.max_row + 1, column=1,
+            value="Foto dari belakang robot sebelum perintah pertama dan setelah robot berhenti. "
+                  "Geser = pindahnya ujung belakang pelampung kiri; arah ditulis setara x mozaik "
+                  "per 14,6 mozaik (panjang pelampung). Hitung dengan ukur_foto_c1.py.").font = Font(italic=True, size=9, color="991B1B")
     return ws
 
 
@@ -148,7 +178,7 @@ def sheet_sesi(wb):
                                                                      color=NAVY)
     items = ["Tanggal / jam mulai", "Ukuran 1 keramik (cm)", "Ukuran 1 mozaik (cm)",
              "Pojok acuan (0 ; 0)", "Baterai penuh saat mulai (Y/T)", "Status MPU (S)",
-             "ROBOT_SPEED_MPS", "KP_HEADING", "Ukuran melintang C1/C2 (hasil uji coba ruang)",
+             "ROBOT_SPEED_MPS", "KP_HEADING", "Ukuran melintang C1 (hasil uji coba ruang)",
              "Cuaca / angin / riak air", "Pencatat"]
     for i, k in enumerate(items, start=3):
         c = ws.cell(row=i, column=1, value=k)
@@ -162,7 +192,8 @@ def sheet_sesi(wb):
     for i, t in enumerate((
             "1. Tiap skenario punya satu sheet. Isi hanya sel kuning.",
             "2. Skenario A: isi baris saat FIN (kalau sempat), lalu kolom & baris posisi akhir.",
-            "3. Skenario B & C: isi posisi haluan dan buritan setelah robot diam.",
+            "3. Skenario B: hitung mozaik pelampung kiri dari foto tegak, yaw dari log GUI.",
+            "   C1: geser & arah dari foto awal-akhir (ukur_foto_c1.py), FIN & waktu dari log GUI.",
             "4. Jarak, galat, sudut, rata-rata, MAE, MAPE, dan simpangan baku terhitung sendiri.",
             "5. Satu baris = satu percobaan nyata. Jangan menyalin hasil percobaan lain."),
             start=r + 1):
@@ -171,6 +202,9 @@ def sheet_sesi(wb):
 
 
 def main():
+    if OUT.exists():
+        sys.exit(f"{OUT.name} sudah ada (berisi data uji) — tidak ditimpa. "
+                 "Pindahkan/ganti nama dulu bila memang ingin lembar kosong.")
     wb = Workbook()
     wb.remove(wb.active)
     sheet_sesi(wb)
@@ -180,8 +214,7 @@ def main():
     for kode, perintah, target in (("B1", "CW:45", 45), ("B2", "CW:90", 90),
                                    ("B3", "CCW:45", 45), ("B4", "CCW:90", 90)):
         sheet_b(wb, kode, perintah, target)
-    sheet_c(wb, "C1", "Kotak 1 x 2 m", 2, 4, 8)
-    sheet_c(wb, "C2", "Zigzag mini", 2, 4, 13)
+    sheet_c1_foto(wb)
     wb.save(OUT)
     print(f"XLSX : {OUT}")
 
