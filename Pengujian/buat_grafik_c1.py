@@ -5,15 +5,18 @@ lintasan menurut robot (jarak perintah + yaw MPU) disandingkan dengan aktual.
 
     pip install -r requirements.txt
     python buat_grafik_c1.py --lembar     # sekali: buat Lembar_Data_C1_Titik_Belok.xlsx
-    python buat_grafik_c1.py --cara       # gambar penjelasan cara ukur & pasang benang
+    python buat_grafik_c1.py --log <log>  # yaw MPU di tiap FIN dari log GUI (kolom F)
     python buat_grafik_c1.py              # setelah lembar diisi & disimpan: buat grafik
+
+Prosedur lengkap di lapangan (alat, dudukan penanda, benang, busur) ada di
+Panduan_Pengujian_C1.pdf (buat_panduan_c1.py).
 
 Cara ukur (masukan dosen pembimbing): robot dibiarkan menjalankan kotak tanpa
 berhenti untuk diukur. Setiap kali robot selesai maju (FIN FW), satu orang
-menaruh PENANDA (pemberat) di dasar kolam tepat di bawah titik acuan robot
-(satu titik di badan robot yang sedekat mungkin ke tengah, dipakai terus).
-Setelah robot selesai, di atas tiap penanda didirikan tiang dan tiang yang
-berurutan dihubungkan dengan BENANG di atas air, lalu:
+menaruh DUDUKAN PENANDA (botol isi pasir + pipa pendek + sok) di dasar kolam,
+as pipanya tepat di bawah titik acuan robot. Setelah robot selesai, pipa panjang
+dicolok ke tiap sok dan pipa yang berurutan dihubungkan dengan BENANG di atas
+air, lalu:
     jarak  = meteran sepanjang benang dari penanda ke penanda berikutnya (cm)
     sudut  = busur di tiap penanda, sudut DALAM antara benang ke penanda
              sebelumnya dan benang ke penanda berikutnya (ideal 90°)
@@ -29,18 +32,19 @@ MPU, jadi selisihnya dengan posisi aktual adalah galat perhitungan robot.
 """
 import argparse
 import math
+import re
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from matplotlib.patches import Arc, FancyBboxPatch, Rectangle
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from build_skenario import GAMBAR, HERE, INK, RED, ROBOT, WATER
+from build_skenario import GAMBAR, HERE, INK, ROBOT
 from buat_lembar_data import BOX, CENTER, HEAD, ISI, NAVY, RUMUS
 
 XLSX = HERE / "Lembar_Data_C1_Titik_Belok.xlsx"
@@ -365,157 +369,6 @@ def fig_galat(data, out):
     return out
 
 
-def fig_cara(out):
-    """Gambar penjelasan: penanda di titik belok, benang, meteran, dan busur."""
-    fig, ax = plt.subplots(figsize=(8, 6.2))
-    ax.set_aspect("equal")
-    ax.axis("off")
-    ax.set_xlim(-150, 300)
-    ax.set_ylim(-75, 275)
-    # contoh lintasan nyata yang sedikit melenceng dari rencana
-    T = [(0, 0), (-6, 196), (98, 207), (112, 8), (14, -10)]
-    nama = ["S", "T1", "T2", "T3", "T4"]
-    offset = {"S": (-14, -4), "T1": (-32, 4), "T2": (12, 6), "T3": (12, -4), "T4": (10, -12)}
-    ax.plot(*zip(*RENCANA), ls=(0, (5, 3)), color=C_RENCANA, lw=1.2, zorder=1)
-    ax.plot(*zip(*T), color=INK, lw=1.4, zorder=2)                       # benang
-    for (x0, y0), (x1, y1) in zip(T, T[1:]):                             # arah jalan robot
-        xm, ym = (x0 + x1) / 2, (y0 + y1) / 2
-        ax.annotate("", (xm + (x1 - x0) * 0.06, ym + (y1 - y0) * 0.06), xytext=(xm, ym),
-                    arrowprops=dict(arrowstyle="-|>", color=INK, lw=1.4, mutation_scale=14),
-                    zorder=2)
-    for (x, y), nm in zip(T, nama):
-        ax.plot(x, y, "o", ms=10, color=RED, mec="white", mew=1.5, zorder=4)
-        dx, dy = offset[nm]
-        ax.annotate(nm, (x, y), xytext=(dx, dy), textcoords="offset points", fontsize=11,
-                    weight="bold", color=RED, ha="right" if dx < 0 else "left", va="center")
-    # robot (60 x 42 cm) di T1, menghadap depan
-    ax.add_patch(FancyBboxPatch((T[1][0] - 21, T[1][1] - 30), 42, 60,
-                                boxstyle="round,pad=0,rounding_size=6", fc=ROBOT, ec="none",
-                                alpha=0.18, zorder=3))
-    panah = dict(arrowstyle="->", color=INK, lw=0.8)
-    ax.annotate("Robot sampai di titik belok (FIN FW)\n→ taruh penanda di bawah\ntitik acuan robot",
-                T[1], xytext=(-145, 240), fontsize=8.5, color=INK, va="center", arrowprops=panah)
-    ax.annotate("JARAK S–T1\nmeteran sepanjang benang\n(perintah 200 cm)", (-3, 98),
-                xytext=(-145, 110), fontsize=8.5, color=INK, va="center", arrowprops=panah)
-    # busur di T2: sudut dalam antara benang T2→T1 dan T2→T3
-    a1 = math.degrees(math.atan2(T[1][1] - T[2][1], T[1][0] - T[2][0])) % 360
-    a2 = math.degrees(math.atan2(T[3][1] - T[2][1], T[3][0] - T[2][0])) % 360
-    ax.add_patch(Arc(T[2], 46, 46, theta1=min(a1, a2), theta2=max(a1, a2), color=ROBOT, lw=2,
-                     zorder=3))
-    ax.annotate("SUDUT DALAM di T2\nbusur antara benang T2–T1\ndan benang T2–T3 (ideal 90°)",
-                (T[2][0] - 14, T[2][1] - 14), xytext=(150, 240), fontsize=8.5, color=INK,
-                va="center", arrowprops=panah)
-    ax.annotate("Sudut di T4 tidak bisa diukur\ndengan benang (tidak ada segmen\n"
-                "sesudahnya) → hanya yaw MPU", T[4], xytext=(150, -45), fontsize=8.5,
-                color=INK, va="center", arrowprops=panah)
-    ax.plot([], [], "o", color=RED, ms=8, label="Penanda titik belok")
-    ax.plot([], [], color=INK, lw=1.4, label="Benang antar penanda")
-    ax.plot([], [], ls=(0, (5, 3)), color=C_RENCANA, lw=1.2, label="Rute rencana 1 × 2 m")
-    ax.legend(loc="lower left", frameon=False, fontsize=8.5)
-    ax.set_title("C1 · Cara ukur dari titik belok ke titik belok", fontsize=12, weight="bold",
-                 color=INK, loc="left")
-    fig.tight_layout()
-    fig.savefig(out, dpi=200, bbox_inches="tight", pad_inches=0.1)
-    plt.close(fig)
-    return out
-
-
-def fig_pasang(out):
-    """Gambar penjelasan alat: penanda di dasar, tiang + benang di atas air, dan busur."""
-    fig = plt.figure(figsize=(12, 4.4))
-    gs = fig.add_gridspec(1, 3, width_ratios=[1.05, 1.45, 1.0], wspace=0.08)
-    air, dasar, tali = 0, -70, 20                       # cm, tampak samping
-    panah = dict(arrowstyle="->", color=INK, lw=0.8)
-
-    def kolam(ax, x0, x1):
-        ax.add_patch(Rectangle((x0, dasar), x1 - x0, -dasar, fc=WATER, ec="none", zorder=0))
-        ax.plot([x0, x1], [air, air], color="#38bdf8", lw=1.5, zorder=1)
-        ax.plot([x0, x1], [dasar, dasar], color=INK, lw=2, zorder=1)
-        ax.text(x1, air + 2, "permukaan air", fontsize=7.5, color="#0369a1", ha="right",
-                va="bottom")
-        ax.text(x1, dasar - 3, "dasar kolam", fontsize=7.5, color=INK, ha="right", va="top")
-
-    def pemberat(ax, x):
-        ax.add_patch(FancyBboxPatch((x - 5, dasar), 10, 9, boxstyle="round,pad=0,rounding_size=2",
-                                    fc=RED, ec="none", zorder=3))
-
-    # 1 — saat FIN FW: robot diam, pemberat ditaruh di bawah titik acuan
-    ax = fig.add_subplot(gs[0])
-    ax.set_xlim(-10, 150)
-    ax.set_ylim(-95, 75)
-    kolam(ax, -10, 150)
-    ax.add_patch(Rectangle((30, -6), 70, 12, fc=ROBOT, ec="none", alpha=0.35, zorder=2))
-    ax.add_patch(Rectangle((52, 6), 26, 14, fc=ROBOT, ec="none", alpha=0.55, zorder=2))
-    ax.text(65, 13, "robot", fontsize=7.5, color="white", ha="center", va="center", zorder=3)
-    ax.plot([65, 65], [dasar + 9, -6], ls=(0, (3, 2)), color=INK, lw=1, zorder=2)
-    ax.plot(65, 22, "v", color=RED, ms=8, zorder=4)
-    pemberat(ax, 65)
-    ax.annotate("titik acuan robot\n(stiker, sama terus)", (65, 25), xytext=(-5, 55),
-                fontsize=8, color=INK, arrowprops=panah)
-    ax.annotate("pemberat warna\nmencolok = penanda\ntitik belok", (70, dasar + 6),
-                xytext=(80, -30), fontsize=8, color=INK, arrowprops=panah)
-    ax.set_title("1 · Saat FIN FW (baling-baling mati):\n     taruh penanda di dasar", fontsize=9.5,
-                 weight="bold", color=INK, loc="left")
-
-    # 2 — setelah robot selesai: tiang di atas tiap penanda, benang di tinggi yang sama
-    ax = fig.add_subplot(gs[1])
-    ax.set_xlim(-30, 265)
-    ax.set_ylim(-95, 75)
-    kolam(ax, -30, 265)
-    xs = [0, 100, 200]
-    for x, nm in zip(xs, ["T1", "T2", "T3"]):
-        pemberat(ax, x)
-        ax.plot([x, x], [dasar + 9, 45], color=INK, lw=3, solid_capstyle="round", zorder=3)
-        ax.plot([x - 4, x + 4], [tali, tali], color="#f59e0b", lw=5, zorder=4)   # tanda lakban
-        ax.text(x, 50, nm, fontsize=9, weight="bold", color=RED, ha="center", va="bottom")
-    ax.plot([xs[0], xs[-1]], [tali, tali], color=INK, lw=1.2, zorder=4)          # benang
-    ax.annotate("", (xs[1], tali + 9), xytext=(xs[0], tali + 9),
-                arrowprops=dict(arrowstyle="<->", color=ROBOT, lw=1.4))
-    ax.text(50, tali + 12, "meteran (as ke as)", fontsize=8, color=INK, ha="center",
-            va="bottom")
-    ax.annotate("benang kencang,\ndiikat di lakban\nsetinggi sama", (60, tali),
-                xytext=(9, -8), fontsize=8, color=INK, va="top", arrowprops=panah)
-    ax.annotate("tiang tegak lurus,\nujung bawah di\ntengah penanda", (200, -30),
-                xytext=(109, -8), fontsize=8, color=INK, va="top", arrowprops=panah)
-    ax.set_title("2 · Setelah robot selesai: tiang + benang\n     di atas air (seperti tukang keramik)",
-                 fontsize=9.5, weight="bold", color=INK, loc="left")
-
-    # 3 — tampak atas: busur di pojok
-    ax = fig.add_subplot(gs[2])
-    ax.set_xlim(-75, 95)
-    ax.set_ylim(-95, 75)
-    t1, t0, t2 = (0, 0), (0, -110), (110, 8)
-    ax.plot(*zip(t0, t1, t2), color=INK, lw=1.2, zorder=2)
-    r = 42
-    ax.add_patch(Arc(t1, 2 * r, 2 * r, theta1=-90, theta2=90, color=ROBOT, lw=2, zorder=3))
-    ax.plot([0, 0], [-r, r], color=ROBOT, lw=2, zorder=3)
-    for d in range(0, 181, 10):                              # skala busur, 0° di benang masuk
-        a = math.radians(-90 + d)
-        k = 6 if d % 30 == 0 else 3
-        ax.plot([r * math.cos(a), (r - k) * math.cos(a)], [r * math.sin(a), (r - k) * math.sin(a)],
-                color=ROBOT, lw=1, zorder=3)
-        if d % 90 == 0:
-            ax.text((r + 9) * math.cos(a), (r + 9) * math.sin(a), f"{d}°", fontsize=7.5,
-                    color=ROBOT, ha="center", va="center")
-    ax.plot(*t1, "o", ms=9, color=INK, zorder=4)
-    for (x, y), nm, dx in ((t0, "S (titik sebelumnya)", 4), (t2, "T2", 0)):
-        ax.text(x + dx, y - 6, nm, fontsize=8.5, weight="bold", color=RED, ha="left", va="top")
-    ax.text(-8, 4, "T1", fontsize=9, weight="bold", color=RED, ha="right", va="bottom")
-    ax.annotate("baca angka di benang\nke titik berikutnya\n= SUDUT DALAM", (r * 0.99, 3),
-                xytext=(20, 45), fontsize=8, color=INK, arrowprops=panah)
-    ax.annotate("garis 0° busur\nsejajar benang ke\ntitik sebelumnya", (0, -30),
-                xytext=(-72, -70), fontsize=8, color=INK, arrowprops=panah)
-    ax.set_title("3 · Tampak atas: busur datar di atas\n     benang, titik tengahnya di tiang",
-                 fontsize=9.5, weight="bold", color=INK, loc="left")
-
-    for ax in fig.axes:
-        ax.set_aspect("equal")
-        ax.axis("off")
-    fig.savefig(out, dpi=200, bbox_inches="tight", pad_inches=0.1)
-    plt.close(fig)
-    return out
-
-
 def cetak_tabel(data):
     """Setara Tabel I [1]: galat tiap percobaan dan MAE per titik / segmen."""
     w = 12
@@ -545,19 +398,55 @@ def cetak_tabel(data):
                   f"{f(hitung)} cm (beda besar = ada bacaan meteran/busur yang perlu dicek)")
 
 
+def baca_log(path):
+    """
+    Yaw MPU di tiap FIN dari berkas log GUI (logs/log_feeder_*.txt). Baris yang dipakai:
+        [2026-10-05 21:49:44] (SELESAI) FIN FW:200 — ...
+        [2026-10-05 21:49:45] (MPU-NRF) Roll=0.4 Pitch=-1.2 Yaw=44.1
+    Yaw saat FIN = cuplikan MPU pertama pada/sesudah jam FIN; yaw +3 s untuk CW
+    terakhir (robot sudah berhenti berputar) dipakai di baris Akhir.
+    """
+    waktu = r"^\[(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\] "
+    pola_fin = re.compile(waktu + r"\(SELESAI\) FIN (\w+):(\d+)")
+    pola_mpu = re.compile(waktu + r"\(MPU-\w+\) .*?Yaw=(-?[\d.]+)")
+    fins, yaws = [], []
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            if m := pola_fin.match(line):
+                fins.append((datetime.fromisoformat(m[1]), m[2], int(m[3])))
+            elif m := pola_mpu.match(line):
+                yaws.append((datetime.fromisoformat(m[1]), float(m[2])))
+
+    def yaw_pada(t, maks_s=3):
+        for ty, y in yaws:
+            if 0 <= (ty - t).total_seconds() <= maks_s:
+                return y
+        return None
+
+    if not fins:
+        sys.exit(f"Tidak ada baris FIN di {Path(path).name}.")
+    print(f"{'No':>3}  {'Jam':8}  {'Perintah':9}  {'Yaw FIN':>8}  {'Yaw +3 s':>8}  Isi ke")
+    for i, (t, move, dist) in enumerate(fins, 1):
+        isi = ("kolom F, baris segmen FW ini" if move == "FW" else
+               "Yaw +3 s: kolom F baris Akhir (bila ini CW terakhir)")
+        print(f"{i:>3}  {t:%H:%M:%S}  {move + ':' + str(dist):9}  "
+              f"{f(yaw_pada(t)):>8}  {f(yaw_pada(t + timedelta(seconds=3))):>8}  {isi}")
+    if not yaws:
+        print("Tidak ada baris MPU — pastikan saklar Log MPU menyala saat uji.")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
     ap.add_argument("--lembar", action="store_true", help="buat lembar isian kosong")
-    ap.add_argument("--cara", action="store_true", help="gambar penjelasan cara ukur")
+    ap.add_argument("--log", type=Path, help="berkas log GUI: tampilkan yaw MPU di tiap FIN")
     ap.add_argument("--xlsx", type=Path, default=XLSX, help="lembar data yang dibaca")
     ap.add_argument("--out-dir", type=Path, default=GAMBAR, help="folder keluaran gambar")
     a = ap.parse_args()
     if a.lembar:
         return buat_lembar()
+    if a.log:
+        return baca_log(a.log)
     a.out_dir.mkdir(exist_ok=True)
-    if a.cara:
-        print(f"PNG  : {fig_cara(a.out_dir / 'fig_c1_cara_ukur.png')}")
-        return print(f"PNG  : {fig_pasang(a.out_dir / 'fig_c1_pasang_benang.png')}")
     if not a.xlsx.exists():
         sys.exit(f"{a.xlsx.name} belum ada. Buat dulu: python buat_grafik_c1.py --lembar")
     data = baca(a.xlsx)
