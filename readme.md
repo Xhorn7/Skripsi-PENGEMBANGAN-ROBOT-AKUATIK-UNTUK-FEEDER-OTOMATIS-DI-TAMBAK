@@ -203,8 +203,8 @@ Skrip di folder `Pengujian/` bisa dijalankan dari PC maupun laptop (path relatif
 pip install -r Pengujian/requirements.txt
 python Pengujian/build_skenario.py      # Rancangan_Skenario_Pengujian_Gerak.docx + .pdf
 python Pengujian/buat_lembar_data.py    # Lembar_Data_Pengujian.xlsx (hitung otomatis)
-python Pengujian/buat_grafik_c1.py      # grafik C1 rute rencana vs aktual per titik belok
-                                        # (--lembar: buat Lembar_Data_C1_Titik_Belok.xlsx)
+python Pengujian/buat_grafik_c1.py      # grafik C1: rencana vs aktual vs menurut robot (MPU)
+                                        # (--lembar: lembar isian, --cara: gambar cara ukur)
 ```
 
 PDF dibuat lewat Microsoft Word atau LibreOffice bila tersedia; kalau tidak ada, cukup DOCX-nya.
