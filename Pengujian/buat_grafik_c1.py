@@ -5,13 +5,15 @@ lintasan menurut robot (jarak perintah + yaw MPU) disandingkan dengan aktual.
 
     pip install -r requirements.txt
     python buat_grafik_c1.py --lembar     # sekali: buat Lembar_Data_C1_Titik_Belok.xlsx
-    python buat_grafik_c1.py --cara       # gambar penjelasan cara ukur
+    python buat_grafik_c1.py --cara       # gambar penjelasan cara ukur & pasang benang
     python buat_grafik_c1.py              # setelah lembar diisi & disimpan: buat grafik
 
 Cara ukur (masukan dosen pembimbing): robot dibiarkan menjalankan kotak tanpa
 berhenti untuk diukur. Setiap kali robot selesai maju (FIN FW), satu orang
-menaruh PENANDA tepat di bawah titik tengah robot. Setelah robot selesai,
-penanda yang berurutan dihubungkan dengan BENANG di atas air, lalu:
+menaruh PENANDA (pemberat) di dasar kolam tepat di bawah titik acuan robot
+(satu titik di badan robot yang sedekat mungkin ke tengah, dipakai terus).
+Setelah robot selesai, di atas tiap penanda didirikan tiang dan tiang yang
+berurutan dihubungkan dengan BENANG di atas air, lalu:
     jarak  = meteran sepanjang benang dari penanda ke penanda berikutnya (cm)
     sudut  = busur di tiap penanda, sudut DALAM antara benang ke penanda
              sebelumnya dan benang ke penanda berikutnya (ideal 90°)
@@ -33,12 +35,12 @@ from pathlib import Path
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from matplotlib.patches import Arc, FancyBboxPatch
+from matplotlib.patches import Arc, FancyBboxPatch, Rectangle
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from build_skenario import GAMBAR, HERE, INK, RED, ROBOT
+from build_skenario import GAMBAR, HERE, INK, RED, ROBOT, WATER
 from buat_lembar_data import BOX, CENTER, HEAD, ISI, NAVY, RUMUS
 
 XLSX = HERE / "Lembar_Data_C1_Titik_Belok.xlsx"
@@ -193,7 +195,7 @@ def buat_lembar():
         "1. Robot dibiarkan menjalankan kotak; tiap perintah dikirim segera setelah FIN "
         "sebelumnya. Robot tidak dihentikan untuk diukur.",
         "2. Saat FIN tiap FW muncul (robot sampai di titik belok), satu orang menaruh penanda "
-        "tepat di bawah titik tengah robot.",
+        "di dasar kolam tepat di bawah titik acuan robot (stiker, sedekat mungkin ke tengah).",
         "3. Setelah robot selesai, hubungkan penanda berurutan (S–T1–T2–T3–T4) dengan benang "
         "di atas air.",
         "4. Kolom D: meteran sepanjang benang. Kolom E: busur di penanda, sudut DALAM antara "
@@ -391,7 +393,7 @@ def fig_cara(out):
                                 boxstyle="round,pad=0,rounding_size=6", fc=ROBOT, ec="none",
                                 alpha=0.18, zorder=3))
     panah = dict(arrowstyle="->", color=INK, lw=0.8)
-    ax.annotate("Robot sampai di titik belok (FIN FW)\n→ taruh penanda di bawah\ntitik tengahnya",
+    ax.annotate("Robot sampai di titik belok (FIN FW)\n→ taruh penanda di bawah\ntitik acuan robot",
                 T[1], xytext=(-145, 240), fontsize=8.5, color=INK, va="center", arrowprops=panah)
     ax.annotate("JARAK S–T1\nmeteran sepanjang benang\n(perintah 200 cm)", (-3, 98),
                 xytext=(-145, 110), fontsize=8.5, color=INK, va="center", arrowprops=panah)
@@ -413,6 +415,102 @@ def fig_cara(out):
     ax.set_title("C1 · Cara ukur dari titik belok ke titik belok", fontsize=12, weight="bold",
                  color=INK, loc="left")
     fig.tight_layout()
+    fig.savefig(out, dpi=200, bbox_inches="tight", pad_inches=0.1)
+    plt.close(fig)
+    return out
+
+
+def fig_pasang(out):
+    """Gambar penjelasan alat: penanda di dasar, tiang + benang di atas air, dan busur."""
+    fig = plt.figure(figsize=(12, 4.4))
+    gs = fig.add_gridspec(1, 3, width_ratios=[1.05, 1.45, 1.0], wspace=0.08)
+    air, dasar, tali = 0, -70, 20                       # cm, tampak samping
+    panah = dict(arrowstyle="->", color=INK, lw=0.8)
+
+    def kolam(ax, x0, x1):
+        ax.add_patch(Rectangle((x0, dasar), x1 - x0, -dasar, fc=WATER, ec="none", zorder=0))
+        ax.plot([x0, x1], [air, air], color="#38bdf8", lw=1.5, zorder=1)
+        ax.plot([x0, x1], [dasar, dasar], color=INK, lw=2, zorder=1)
+        ax.text(x1, air + 2, "permukaan air", fontsize=7.5, color="#0369a1", ha="right",
+                va="bottom")
+        ax.text(x1, dasar - 3, "dasar kolam", fontsize=7.5, color=INK, ha="right", va="top")
+
+    def pemberat(ax, x):
+        ax.add_patch(FancyBboxPatch((x - 5, dasar), 10, 9, boxstyle="round,pad=0,rounding_size=2",
+                                    fc=RED, ec="none", zorder=3))
+
+    # 1 — saat FIN FW: robot diam, pemberat ditaruh di bawah titik acuan
+    ax = fig.add_subplot(gs[0])
+    ax.set_xlim(-10, 150)
+    ax.set_ylim(-95, 75)
+    kolam(ax, -10, 150)
+    ax.add_patch(Rectangle((30, -6), 70, 12, fc=ROBOT, ec="none", alpha=0.35, zorder=2))
+    ax.add_patch(Rectangle((52, 6), 26, 14, fc=ROBOT, ec="none", alpha=0.55, zorder=2))
+    ax.text(65, 13, "robot", fontsize=7.5, color="white", ha="center", va="center", zorder=3)
+    ax.plot([65, 65], [dasar + 9, -6], ls=(0, (3, 2)), color=INK, lw=1, zorder=2)
+    ax.plot(65, 22, "v", color=RED, ms=8, zorder=4)
+    pemberat(ax, 65)
+    ax.annotate("titik acuan robot\n(stiker, sama terus)", (65, 25), xytext=(-5, 55),
+                fontsize=8, color=INK, arrowprops=panah)
+    ax.annotate("pemberat warna\nmencolok = penanda\ntitik belok", (70, dasar + 6),
+                xytext=(80, -30), fontsize=8, color=INK, arrowprops=panah)
+    ax.set_title("1 · Saat FIN FW (baling-baling mati):\n     taruh penanda di dasar", fontsize=9.5,
+                 weight="bold", color=INK, loc="left")
+
+    # 2 — setelah robot selesai: tiang di atas tiap penanda, benang di tinggi yang sama
+    ax = fig.add_subplot(gs[1])
+    ax.set_xlim(-30, 265)
+    ax.set_ylim(-95, 75)
+    kolam(ax, -30, 265)
+    xs = [0, 100, 200]
+    for x, nm in zip(xs, ["T1", "T2", "T3"]):
+        pemberat(ax, x)
+        ax.plot([x, x], [dasar + 9, 45], color=INK, lw=3, solid_capstyle="round", zorder=3)
+        ax.plot([x - 4, x + 4], [tali, tali], color="#f59e0b", lw=5, zorder=4)   # tanda lakban
+        ax.text(x, 50, nm, fontsize=9, weight="bold", color=RED, ha="center", va="bottom")
+    ax.plot([xs[0], xs[-1]], [tali, tali], color=INK, lw=1.2, zorder=4)          # benang
+    ax.annotate("", (xs[1], tali + 9), xytext=(xs[0], tali + 9),
+                arrowprops=dict(arrowstyle="<->", color=ROBOT, lw=1.4))
+    ax.text(50, tali + 12, "meteran (as ke as)", fontsize=8, color=INK, ha="center",
+            va="bottom")
+    ax.annotate("benang kencang,\ndiikat di lakban\nsetinggi sama", (60, tali),
+                xytext=(9, -8), fontsize=8, color=INK, va="top", arrowprops=panah)
+    ax.annotate("tiang tegak lurus,\nujung bawah di\ntengah penanda", (200, -30),
+                xytext=(109, -8), fontsize=8, color=INK, va="top", arrowprops=panah)
+    ax.set_title("2 · Setelah robot selesai: tiang + benang\n     di atas air (seperti tukang keramik)",
+                 fontsize=9.5, weight="bold", color=INK, loc="left")
+
+    # 3 — tampak atas: busur di pojok
+    ax = fig.add_subplot(gs[2])
+    ax.set_xlim(-75, 95)
+    ax.set_ylim(-95, 75)
+    t1, t0, t2 = (0, 0), (0, -110), (110, 8)
+    ax.plot(*zip(t0, t1, t2), color=INK, lw=1.2, zorder=2)
+    r = 42
+    ax.add_patch(Arc(t1, 2 * r, 2 * r, theta1=-90, theta2=90, color=ROBOT, lw=2, zorder=3))
+    ax.plot([0, 0], [-r, r], color=ROBOT, lw=2, zorder=3)
+    for d in range(0, 181, 10):                              # skala busur, 0° di benang masuk
+        a = math.radians(-90 + d)
+        k = 6 if d % 30 == 0 else 3
+        ax.plot([r * math.cos(a), (r - k) * math.cos(a)], [r * math.sin(a), (r - k) * math.sin(a)],
+                color=ROBOT, lw=1, zorder=3)
+        if d % 90 == 0:
+            ax.text((r + 9) * math.cos(a), (r + 9) * math.sin(a), f"{d}°", fontsize=7.5,
+                    color=ROBOT, ha="center", va="center")
+    ax.plot(*t1, "o", ms=9, color=INK, zorder=4)
+    for (x, y), nm, dx in ((t0, "S (titik sebelumnya)", 4), (t2, "T2", 0)):
+        ax.text(x + dx, y - 6, nm, fontsize=8.5, weight="bold", color=RED, ha="left", va="top")
+    ax.text(-8, 4, "T1", fontsize=9, weight="bold", color=RED, ha="right", va="bottom")
+    ax.annotate("baca angka di benang\nke titik berikutnya\n= SUDUT DALAM", (r * 0.99, 3),
+                xytext=(20, 45), fontsize=8, color=INK, arrowprops=panah)
+    ax.annotate("garis 0° busur\nsejajar benang ke\ntitik sebelumnya", (0, -30),
+                xytext=(-72, -70), fontsize=8, color=INK, arrowprops=panah)
+    ax.set_title("3 · Tampak atas: busur datar di atas\n     benang, titik tengahnya di tiang",
+                 fontsize=9.5, weight="bold", color=INK, loc="left")
+
+    for ax in fig.axes:
+        ax.set_aspect("equal")
+        ax.axis("off")
     fig.savefig(out, dpi=200, bbox_inches="tight", pad_inches=0.1)
     plt.close(fig)
     return out
@@ -458,7 +556,8 @@ def main():
         return buat_lembar()
     a.out_dir.mkdir(exist_ok=True)
     if a.cara:
-        return print(f"PNG  : {fig_cara(a.out_dir / 'fig_c1_cara_ukur.png')}")
+        print(f"PNG  : {fig_cara(a.out_dir / 'fig_c1_cara_ukur.png')}")
+        return print(f"PNG  : {fig_pasang(a.out_dir / 'fig_c1_pasang_benang.png')}")
     if not a.xlsx.exists():
         sys.exit(f"{a.xlsx.name} belum ada. Buat dulu: python buat_grafik_c1.py --lembar")
     data = baca(a.xlsx)
