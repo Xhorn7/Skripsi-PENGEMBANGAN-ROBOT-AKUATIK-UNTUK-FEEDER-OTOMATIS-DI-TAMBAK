@@ -470,27 +470,41 @@ def f(x, n=1):
 
 
 # ---------------------------------------------------------------- grafik
-def _gaya_peta(ax):
+def _batas(data):
+    """Batas peta (kelipatan 50 cm) yang memuat semua titik, minimal −50..150 × −50..250."""
+    pts = RENCANA + [p for d in data for p in d["aktual"] + d["robot"]]
+    lo = lambda v, m: min(m, 50 * math.floor((v - 10) / 50))
+    hi = lambda v, m: max(m, 50 * math.ceil((v + 10) / 50))
+    return (lo(min(x for x, _ in pts), -50), hi(max(x for x, _ in pts), 150),
+            lo(min(y for _, y in pts), -50), hi(max(y for _, y in pts), 250))
+
+
+def _gaya_peta(ax, batas):
+    x0, x1, y0, y1 = batas
     ax.set_aspect("equal")
-    ax.set_xlim(-50, 160)
-    ax.set_ylim(-50, 260)
-    ax.set_xticks(range(-50, 151, 50))
-    ax.set_yticks(range(-50, 251, 50))
-    ax.set_xticks(range(-50, 151, 25), minor=True)
-    ax.set_yticks(range(-50, 251, 25), minor=True)
+    ax.set_xlim(x0, x1 + 10)
+    ax.set_ylim(y0, y1 + 10)
+    ax.set_xticks(range(x0, x1 + 1, 50))
+    ax.set_yticks(range(y0, y1 + 1, 50))
+    ax.set_xticks(range(x0, x1 + 1, 25), minor=True)
+    ax.set_yticks(range(y0, y1 + 1, 25), minor=True)
     ax.grid(which="both", color="#e2e8f0", lw=0.6)
     ax.set_axisbelow(True)
     for s in ax.spines.values():
         s.set_visible(False)
-    ax.tick_params(colors=INK, labelsize=8, length=0)
+    ax.tick_params(colors=INK, labelsize=9.5, length=0)
 
 
 def fig_rute(data, out):
     """Satu panel per percobaan: rencana vs aktual vs menurut robot (seperti Fig. 4 [1])."""
     n = len(data)
-    fig, axes = plt.subplots(1, n, figsize=(n * 2.75 + 0.5, 5.2), sharey=True, squeeze=False)
+    batas = _batas(data)
+    lebar = 2.9                                              # in per panel, skala sama
+    tinggi = lebar * (batas[3] - batas[2] + 10) / (batas[1] - batas[0] + 10) + 1.7
+    fig, axes = plt.subplots(1, n, figsize=(n * lebar + 0.4, tinggi), sharey=True,
+                             squeeze=False)
     for ax, d in zip(axes[0], data):
-        _gaya_peta(ax)
+        _gaya_peta(ax, batas)
         ax.plot(*zip(*RENCANA), ls=(0, (5, 3)), color=C_RENCANA, lw=1.6, marker="o", ms=6,
                 mfc="white", mec=C_RENCANA, mew=1.4, label="Rute rencana", zorder=2)
         if len(d["robot"]) > 1:
@@ -504,17 +518,17 @@ def fig_rute(data, out):
         for kode, (x, y) in zip(("S/T4", "T1", "T2", "T3"), RENCANA):
             dx, dy = geser[kode]
             ax.annotate(kode, (x, y), xytext=(dx, dy), textcoords="offset points",
-                        fontsize=7.5, color=INK, ha="right" if dx < 0 else "left", va="center")
+                        fontsize=9.5, color=INK, ha="right" if dx < 0 else "left", va="center")
         ax.set_title(f"Percobaan {d['perc']}\nMAE posisi aktual {f(rata(d['galat']))} cm",
-                     fontsize=9, color=INK, loc="left")
-        ax.set_xlabel("x (cm)", fontsize=8, color=INK)
-    axes[0][0].set_ylabel("y (cm), S = (0, 0)", fontsize=8, color=INK)
+                     fontsize=11, color=INK, loc="left")
+        ax.set_xlabel("x (cm)", fontsize=10, color=INK)
+    axes[0][0].set_ylabel("y (cm), S = (0, 0)", fontsize=10, color=INK)
     h, lab = axes[0][0].get_legend_handles_labels()
-    fig.legend(h, lab, loc="upper left", bbox_to_anchor=(0.01, 0.94), ncol=3, frameon=False,
-               fontsize=8)
+    fig.legend(h, lab, loc="upper left", bbox_to_anchor=(0.01, 0.93), ncol=3, frameon=False,
+               fontsize=10)
     fig.suptitle("C1 · Rute rencana, lintasan aktual, dan lintasan menurut robot",
-                 x=0.01, ha="left", fontsize=11, weight="bold", color=INK)
-    fig.tight_layout(rect=(0, 0, 1, 0.88))
+                 x=0.01, ha="left", fontsize=12.5, weight="bold", color=INK)
+    fig.tight_layout(rect=(0, 0, 1, 0.86))
     fig.savefig(out, dpi=200, bbox_inches="tight", pad_inches=0.1)
     plt.close(fig)
     return out
@@ -526,9 +540,9 @@ def fig_galat(data, out):
     x = list(range(len(kode)))
     fig, ax = plt.subplots(figsize=(7, 3.4))
     semua = []
-    # label biru di bawah titik, oranye di atas, supaya tidak bertumpuk
-    for key, warna, label, mk, dy in (("galat", ROBOT, "Aktual vs rencana", "o", -15),
-                                      ("galat_mpu", C_MPU, "Menurut robot vs aktual", "s", 9)):
+    # label biru di kanan titik, oranye di atas, supaya tidak bertumpuk / menutup sumbu
+    for key, warna, label, mk, off in (("galat", ROBOT, "Aktual vs rencana", "o", (11, 0)),
+                                       ("galat_mpu", C_MPU, "Menurut robot vs aktual", "s", (0, 9))):
         mae = [rata(kolom([d[key] for d in data], i)) for i in x]
         pts = [(i, m) for i, m in zip(x, mae) if m is not None]
         semua += [m for _i, m in pts]
@@ -537,7 +551,8 @@ def fig_galat(data, out):
         ax.plot(*zip(*pts), color=warna, lw=2, marker=mk, ms=7, mec="white", mew=1.2,
                 label=label)
         for i, m in pts:
-            ax.annotate(f(m), (i, m), xytext=(0, dy), textcoords="offset points", ha="center",
+            ax.annotate(f(m), (i, m), xytext=off, textcoords="offset points",
+                        ha="left" if off[0] else "center", va="center" if off[0] else "bottom",
                         fontsize=8.5, color=INK,
                         bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none"))
     ax.set_xticks(x)
@@ -662,13 +677,17 @@ def main():
     if a.log:
         return baca_log(a.log)
     a.out_dir.mkdir(exist_ok=True)
-    path = a.xlsx or (XLSX_XY if XLSX_XY.exists() else XLSX)
-    if not path.exists():
-        sys.exit(f"{path.name} belum ada. Buat dulu: python buat_grafik_c1.py --lembar-xy")
-    print(f"Baca : {path.name}")
-    data = baca_xy(path) if SHEET_XY in load_workbook(path).sheetnames else baca(path)
+    # bawaan: lembar pertama yang sudah berisi data (koordinat dulu, lalu benang)
+    data = None
+    for path in [a.xlsx] if a.xlsx else [XLSX_XY, XLSX]:
+        if not path.exists():
+            continue
+        data = baca_xy(path) if SHEET_XY in load_workbook(path).sheetnames else baca(path)
+        if data:
+            print(f"Baca : {path.name}")
+            break
     if not data:
-        sys.exit("Lembar C1 belum diisi — grafik tidak dibuat.")
+        sys.exit("Lembar C1 belum ada atau belum diisi — grafik tidak dibuat.")
     print(f"PNG  : {fig_rute(data, a.out_dir / 'fig_c1_rute_aktual.png')}")
     print(f"PNG  : {fig_galat(data, a.out_dir / 'fig_c1_galat_titik.png')}")
     cetak_tabel(data)
