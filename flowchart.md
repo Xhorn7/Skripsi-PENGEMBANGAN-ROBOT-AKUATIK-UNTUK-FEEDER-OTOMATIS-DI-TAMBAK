@@ -187,7 +187,7 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    ENTRY(["Mulai executeForward(distCm)"]) --> CALC["targetYaw = yaw saat ini<br/>durationMs = (distCm/100) / speed × 1000"]
+    ENTRY(["Mulai executeForward(distCm)"]) --> CALC["targetYaw = yaw saat ini<br/>durationMs = FW_START_MS + (distCm/100) / speed × 1000<br/>(2100 ms + jarak ÷ 0,28 m/s)"]
     CALC --> TIMECHECK{Waktu<br/>habis?}
     TIMECHECK -- Ya --> STOPFN([Stop Boat → MOVE_DONE])
     TIMECHECK -- Tidak --> UPD[mpu.update]
@@ -196,7 +196,7 @@ flowchart TD
     SIG -- Ya --> STOPQ{STOP<br/>diterima?}
     STOPQ -- Ya --> ABORT([🛑 Stop Boat → MOVE_STOPPED])
     STOPQ -- Tidak --> ERR["error = targetYaw - yaw<br/>normalisasi ke -180..180"]
-    ERR --> DEAD{"|error| > 2°?"}
+    ERR --> DEAD{"MPU sehat dan<br/>|error| > 2°?"}
     DEAD -- Tidak --> STRAIGHT["correction = 0<br/>(lurus)"]
     DEAD -- Ya --> PROP["correction = Kp × error<br/>clamp ±MAX_CORRECTION"]
     PROP --> WRITE
@@ -216,25 +216,33 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    ENTRY(["Mulai executeTurn(deg, clockwise)"]) --> INIT["startYaw = yaw saat ini<br/>limitMs = deg/TURN_RATE × 3000 + 3000"]
+    ENTRY(["Mulai executeTurn(deg, clockwise)"]) --> INIT["startYaw = yaw saat ini<br/>openLoopMs = deg / TURN_RATE × 1000<br/>limitMs = openLoopMs × 3 + 3000<br/>stopDeg = max(deg − 15°, 0,3 × deg)"]
     INIT --> SPIN{clockwise?}
-    SPIN -- Ya --> CW["spinCW<br/>Kiri = 1300, Kanan = diam"]
-    SPIN -- Tidak --> CCW["spinCCW<br/>Kiri = diam, Kanan = 1300"]
+    SPIN -- Ya --> CW["spinCW<br/>motor kiri jalan, kanan diam"]
+    SPIN -- Tidak --> CCW["spinCCW<br/>motor kanan jalan, kiri diam"]
     CW --> LOOP
     CCW --> LOOP{Batas waktu<br/>terlampaui?}
     LOOP -- Ya --> TIMEOUT([Stop Boat → MOVE_DONE<br/>batas waktu pengaman])
     LOOP -- Tidak --> UPD[mpu.update]
     UPD --> SIG{"serviceRadio +<br/>cek STOP"}
     SIG -- "Gagal" --> ABORT([🛑 Stop Boat<br/>MOVE_STOPPED / LOST_SIGNAL])
-    SIG -- OK --> DELTA["delta = yaw - startYaw<br/>normalisasi ke -180..180"]
+    SIG -- OK --> MPUOK{MPU sehat?}
+    MPUOK -- Tidak --> OPEN{"waktu ≥ openLoopMs?"}
+    OPEN -- Ya --> OPENDONE([Stop Boat → MOVE_DONE<br/>putaran open-loop])
+    OPEN -- Tidak --> DELAY
+    MPUOK -- Ya --> DELTA["delta = yaw - startYaw<br/>normalisasi ke -180..180"]
     DELTA --> TURNED["turned = (clockwise ? -delta : delta) × YAW_SIGN"]
-    TURNED --> REACH{"turned ≥ deg - 3°?"}
+    TURNED --> REACH{"turned ≥ stopDeg?"}
     REACH -- Ya --> DONE([✅ Stop Boat → MOVE_DONE])
     REACH -- Tidak --> DELAY[delay 20ms]
     DELAY --> LOOP
 ```
 
-> **Sudut ditutup oleh sensor, bukan oleh waktu.** Konstanta `TURN_90_MS` yang dulu rawan sudah dihapus; `TURN_RATE_DPS` kini hanya dipakai untuk menghitung batas waktu pengaman.
+> **Sudut ditutup oleh sensor, bukan oleh waktu.** Konstanta `TURN_90_MS` yang dulu rawan sudah dihapus; `TURN_RATE_DPS` kini hanya dipakai untuk menghitung batas waktu pengaman dan putaran open-loop saat MPU mati.
+>
+> **Kompensasi inersia (`TURN_COAST_DEG` = 15°).** Robot masih berputar ± 15° setelah motor mati, jadi motor dimatikan 15° sebelum target (minimal 30% sudut perintah agar putaran kecil tetap berjalan).
+>
+> **Arah motor.** Kabel ESC tersilang (pin ESC kiri menggerakkan motor kanan fisik), sehingga isi `spinCW()`/`spinCCW()` ditukar di firmware; diagram ini menuliskan motor menurut posisi fisiknya.
 >
 > ESC **unidirectional** → putaran memakai *differential thrust*, jadi robot berputar melingkar lebar (posisi ikut bergeser), bukan berputar di tempat. Sudut akhirnya tetap akurat.
 >
