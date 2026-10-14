@@ -204,6 +204,7 @@ pip install -r Pengujian/requirements.txt
 python Pengujian/build_skenario.py      # Rancangan_Skenario_Pengujian_Gerak.docx + .pdf
 python Pengujian/buat_lembar_data.py    # Lembar_Data_Pengujian.xlsx (hitung otomatis)
 python Pengujian/buat_panduan_c1.py     # Panduan_Pengujian_C1.docx + .pdf (alat, dudukan, benang, busur)
+python Pengujian/buat_grafik_c1.py --lembar-xy  # lembar C1 cara koordinat (X/Y meteran dari dinding)
 python Pengujian/buat_grafik_c1.py      # grafik C1: rencana vs aktual vs menurut robot (MPU)
                                         # (--lembar: lembar isian, --log <log>: yaw MPU tiap FIN)
 ```
@@ -219,7 +220,7 @@ PDF dibuat lewat Microsoft Word atau LibreOffice bila tersedia; kalau tidak ada,
 - **[Dokumentasi Kode — receiverArduino.py](Master%20Code/Transmitter/Dokumentasi_Kode_receiverArduino.pdf)** — entry point Pengendali Utama.
 - **[Troubleshooting NRF24](Master%20Code/Robot/New/Finalnew/Dokumentasi_Troubleshooting_NRF.pdf)** — masalah wiring/koneksi radio.
 - **[Rancangan Skenario Pengujian Gerak](Pengujian/Rancangan_Skenario_Pengujian_Gerak.pdf)** — 9 skenario × 3 pengulangan (lurus, belok, kotak, zigzag) di kolam uji 5 × 2 m, posisi robot diukur dengan grid keramik lantai kolam.
-- **[Panduan Pengujian C1](Pengujian/Panduan_Pengujian_C1.pdf)** — uji kotak 1 × 2 m diukur dari titik belok ke titik belok: dudukan penanda (botol + pipa + sok), benang, meteran, busur, yaw MPU dari log, dan pengolahan data.
+- **[Panduan Pengujian C1](Pengujian/Panduan_Pengujian_C1.pdf)** — uji kotak 1 × 2 m diukur dari titik belok ke titik belok: dudukan penanda (botol + pipa + sok), benang, meteran, busur, yaw MPU dari log, dan pengolahan data. Di lapangan dipakai cara koordinat: botol sebagai penanda lantai, lalu tiap titik diukur X/Y dengan meteran dari dinding kiri dan dinding belakang ([lembar isian](Pengujian/Lembar_Data_C1_Koordinat.xlsx)).
 - **[flowchart.md](flowchart.md)** — diagram alur sistem, kedua sisi, siklus Request-Response, heading-hold, putaran closed-loop, path planning, sinyal balik.
 
 ---
