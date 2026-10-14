@@ -157,7 +157,7 @@ def buat_lembar():
     headers = ["Perc.", "Segmen", "Perintah",
                "Jarak aktual (cm) — meteran sepanjang benang antar penanda",
                "Sudut DALAM di titik ujung (°) — busur antara 2 benang",
-               "Yaw MPU (°) — log GUI saat FIN FW",
+               "Yaw MPU (°) — rata-rata selama FW (--log)",
                "Galat jarak (cm)", "Sudut belok aktual (°) = 180 − sudut dalam",
                "Sudut belok menurut MPU (°)", "Galat sudut aktual (°)",
                "Selisih MPU vs aktual (°)", "Keterangan"]
@@ -236,8 +236,8 @@ def buat_lembar():
         "di atas air.",
         "4. Kolom D: meteran sepanjang benang. Kolom E: busur di penanda, sudut DALAM antara "
         "benang ke penanda sebelumnya dan berikutnya (ideal 90°).",
-        "5. Kolom F: yaw MPU dari log GUI saat FIN tiap FW; baris Akhir = yaw setelah CW:90 "
-        "terakhir dan robot diam. Gyro wajib terkalibrasi (robot diam saat dinyalakan).",
+        "5. Kolom F: rata-rata yaw selama tiap FW dari log GUI (--log, kolom Rata2 FW); baris "
+        "Akhir = yaw 3 s setelah CW:90 terakhir dan robot diam. Gyro wajib terkalibrasi (robot diam saat dinyalakan).",
         "6. Sudut di T4 tidak bisa diukur dengan benang (tidak ada segmen sesudahnya), jadi "
         "hanya sudut MPU-nya yang ada. Setelah disimpan, jalankan python buat_grafik_c1.py.",
     )
