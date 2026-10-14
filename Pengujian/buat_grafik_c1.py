@@ -257,7 +257,7 @@ def buat_lembar_xy():
     ws.title = SHEET_XY
     headers = ["Perc.", "Titik", "Penanda / kapan diukur",
                "X (cm) — meteran dari dinding KIRI", "Y (cm) — meteran dari dinding BELAKANG",
-               "Yaw MPU (°) — log GUI saat FIN FW",
+               "Yaw MPU (°) — rata-rata selama FW (--log)",
                "x thd S (cm)", "y thd S (cm)", "Jarak dari titik sebelumnya (cm)",
                "Galat jarak (cm)", "Sudut belok aktual (°)", "Galat sudut (°)",
                "Sudut belok menurut MPU (°)", "Selisih MPU vs aktual (°)",
@@ -352,8 +352,9 @@ def buat_lembar_xy():
         "3. Setelah robot diangkat: ukur tiap titik dengan meteran. X = dari dinding KIRI, "
         "Y = dari dinding BELAKANG (di belakang robot saat start). Meteran sejajar garis nat, "
         "baca tepat di atas as pipa / koin.",
-        "4. Kolom Yaw: dari log GUI saat FIN tiap FW (python buat_grafik_c1.py --log <log>); "
-        "baris Akhir = yaw 3 s setelah CW:90 terakhir. Gyro wajib terkalibrasi.",
+        "4. Kolom Yaw: rata-rata yaw selama tiap FW dari log GUI (python buat_grafik_c1.py "
+        "--log <log>, kolom Rata2 FW); baris Akhir = yaw 3 s setelah CW:90 terakhir. Gyro wajib "
+        "terkalibrasi.",
         "5. Isi angka hasil ukur apa adanya. Bila belum diukur, kosongkan — jangan diisi "
         "angka perintah (200/100/90).",
     )
@@ -586,22 +587,37 @@ def cetak_tabel(data):
                   f"{f(hitung)} cm (beda besar = ada bacaan meteran/busur yang perlu dicek)")
 
 
+def rata_sudut(xs):
+    """Rata-rata sudut (°) yang aman terhadap lompatan ±180."""
+    if not xs:
+        return None
+    sx = sum(math.sin(math.radians(x)) for x in xs)
+    cx = sum(math.cos(math.radians(x)) for x in xs)
+    return math.degrees(math.atan2(sx, cx))
+
+
 def baca_log(path):
     """
-    Yaw MPU di tiap FIN dari berkas log GUI (logs/log_feeder_*.txt). Baris yang dipakai:
+    Yaw MPU per perintah dari berkas log GUI (logs/log_feeder_*.txt). Baris yang dipakai:
+        [2026-10-05 21:49:35] (GERAK) ON FW diterima — Maju 200 cm
         [2026-10-05 21:49:44] (SELESAI) FIN FW:200 — ...
         [2026-10-05 21:49:45] (MPU-NRF) Roll=0.4 Pitch=-1.2 Yaw=44.1
-    Yaw saat FIN = cuplikan MPU pertama pada/sesudah jam FIN; yaw +3 s untuk CW
-    terakhir (robot sudah berhenti berputar) dipakai di baris Akhir.
+    Untuk FW, nilai yang disalin ke lembar adalah RATA-RATA yaw selama robot maju
+    (dari ON sampai FIN): itu arah segmen menurut MPU. Cuplikan tunggal saat FIN
+    sering kena ayunan sesaat di ujung gerak. Yaw +3 s setelah CW terakhir (robot
+    sudah berhenti berputar) dipakai di baris Akhir.
     """
     waktu = r"^\[(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\] "
+    pola_on = re.compile(waktu + r"\(GERAK\) ON (\w+) diterima")
     pola_fin = re.compile(waktu + r"\(SELESAI\) FIN (\w+):(\d+)")
     pola_mpu = re.compile(waktu + r"\(MPU-\w+\) .*?Yaw=(-?[\d.]+)")
-    fins, yaws = [], []
+    fins, yaws, mulai = [], [], {}
     with open(path, encoding="utf-8", errors="replace") as fh:
         for line in fh:
-            if m := pola_fin.match(line):
-                fins.append((datetime.fromisoformat(m[1]), m[2], int(m[3])))
+            if m := pola_on.match(line):
+                mulai[m[2]] = datetime.fromisoformat(m[1])
+            elif m := pola_fin.match(line):
+                fins.append((datetime.fromisoformat(m[1]), m[2], int(m[3]), mulai.get(m[2])))
             elif m := pola_mpu.match(line):
                 yaws.append((datetime.fromisoformat(m[1]), float(m[2])))
 
@@ -611,14 +627,20 @@ def baca_log(path):
                 return y
         return None
 
+    def yaw_selama(t0, t1):
+        return rata_sudut([y for ty, y in yaws if t0 is not None and t0 <= ty <= t1])
+
     if not fins:
         sys.exit(f"Tidak ada baris FIN di {Path(path).name}.")
-    print(f"{'No':>3}  {'Jam':8}  {'Perintah':9}  {'Yaw FIN':>8}  {'Yaw +3 s':>8}  Isi ke")
-    for i, (t, move, dist) in enumerate(fins, 1):
-        isi = ("kolom Yaw, baris titik/segmen FW ini" if move == "FW" else
-               "Yaw +3 s: kolom Yaw baris Akhir (bila ini CW terakhir)")
-        print(f"{i:>3}  {t:%H:%M:%S}  {move + ':' + str(dist):9}  "
-              f"{f(yaw_pada(t)):>8}  {f(yaw_pada(t + timedelta(seconds=3))):>8}  {isi}")
+    print(f"{'No':>3}  {'Jam':8}  {'Perintah':9}  {'Yaw FIN':>8}  {'Rata2 FW':>8}  "
+          f"{'Yaw +3 s':>8}  Isi ke lembar")
+    for i, (t, move, dist, t0) in enumerate(fins, 1):
+        fw = move == "FW"
+        isi = ("Rata2 FW -> kolom Yaw titik ujung segmen ini" if fw else
+               "Yaw +3 s -> kolom Yaw baris Akhir (bila ini CW terakhir)")
+        print(f"{i:>3}  {t:%H:%M:%S}  {move + ':' + str(dist):9}  {f(yaw_pada(t)):>8}  "
+              f"{f(yaw_selama(t0, t)) if fw else '':>8}  "
+              f"{'' if fw else f(yaw_pada(t + timedelta(seconds=3))):>8}  {isi}")
     if not yaws:
         print("Tidak ada baris MPU — pastikan saklar Log MPU menyala saat uji.")
 
